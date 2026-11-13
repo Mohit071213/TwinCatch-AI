@@ -1,0 +1,6 @@
+{
+  "name": "TwinForge AI",
+  "description": "Your Identity. Your Intelligence. Your Content Studio. Personal digital twin identity management, live trend intelligence, multilingual script generation, voice audition, and automated video production.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

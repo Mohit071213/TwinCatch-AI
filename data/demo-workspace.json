@@ -1,0 +1,798 @@
+{
+  "mode": "demo",
+  "twin": {
+    "faceAssets": [
+      {
+        "id": "demo_face_front",
+        "category": "front",
+        "label": "Studio Front Portrait (Neutral)",
+        "url": "/api/media/demo/twin_portrait_front.jpg",
+        "mimeType": "image/jpeg",
+        "filename": "twin_portrait_front.jpg",
+        "sizeBytes": 342800,
+        "uploadedAt": "2026-11-13T05:18:25.892Z"
+      },
+      {
+        "id": "demo_face_talking",
+        "category": "expression_talking",
+        "label": "Three-Quarter Talking Expression",
+        "url": "/api/media/demo/twin_portrait_talking.jpg",
+        "mimeType": "image/jpeg",
+        "filename": "twin_portrait_talking.jpg",
+        "sizeBytes": 318400,
+        "uploadedAt": "2026-11-13T05:18:25.892Z"
+      },
+      {
+        "id": "demo_face_left",
+        "category": "left_profile",
+        "label": "Studio Banner / Framing Reference",
+        "url": "/api/media/demo/studio_editorial_banner.jpg",
+        "mimeType": "image/jpeg",
+        "filename": "studio_editorial_banner.jpg",
+        "sizeBytes": 412000,
+        "uploadedAt": "2026-11-13T05:18:25.892Z"
+      }
+    ],
+    "voiceSamples": [
+      {
+        "id": "demo_voice_en",
+        "label": "Studio Intro — Warm Editorial",
+        "language": "English",
+        "emotion": "Conversational",
+        "url": "",
+        "mimeType": "audio/wav",
+        "filename": "demo_en_editorial_sample.wav",
+        "sizeBytes": 482000,
+        "durationSec": 14,
+        "transcript": "Most creators waste six hours filming a forty-second reel when the real bottleneck is clarity of thought.",
+        "verified": true,
+        "uploadedAt": "2026-11-13T05:18:25.892Z"
+      },
+      {
+        "id": "demo_voice_hinglish",
+        "label": "Hinglish Conversational Cadence",
+        "language": "Hinglish",
+        "emotion": "Warm",
+        "url": "",
+        "mimeType": "audio/wav",
+        "filename": "demo_hinglish_sample.wav",
+        "sizeBytes": 394000,
+        "durationSec": 11,
+        "transcript": "Dekho, AI tab kaam aata hai jab woh aapki apni awaaz aur soch ko amplify kare, replace nahi.",
+        "verified": true,
+        "uploadedAt": "2026-11-13T05:18:25.892Z"
+      }
+    ],
+    "personality": {
+      "creatorName": "Aarav Mehta",
+      "handle": "@aarav.studio",
+      "niche": "Applied AI Systems, Creator Economics & Product Craft",
+      "speakingStyle": "Calm, structured storytelling with sharp 3-second opening hooks and zero fluff.",
+      "vocabularyNotes": "Concise, grounded terminology; avoids generic AI hype words.",
+      "humourStyle": "Subtle observational wit",
+      "formalityLevel": "Conversational Editorial",
+      "accentAndPronunciation": "Natural Indian-English & crisp conversational Hinglish",
+      "catchphrases": [
+        "Let us break the signal from the noise.",
+        "Seedha point pe aate hain."
+      ],
+      "primaryLanguage": "Hinglish",
+      "preferredVoiceProvider": "free_hindi_neural",
+      "preferredVoiceId": "hi-IN-MadhurNeural"
+    },
+    "consent": {
+      "attested": true,
+      "ownerFullName": "Aarav Mehta (Demo Creator Profile)",
+      "attestedAt": "2026-11-13T05:18:25.892Z",
+      "likenessUsageScope": "Demo Showcase Profile — Authorized synthetic studio demonstration.",
+      "requireAiDisclosure": true
+    },
+    "readiness": {
+      "overallScore": 79,
+      "faceScore": 60,
+      "voiceScore": 75,
+      "personalityScore": 100,
+      "consentVerified": true,
+      "missingItems": [
+        "Right profile portrait"
+      ],
+      "externalModelStatus": "local_ready"
+    }
+  },
+  "trends": [
+    {
+      "id": "demo_trend_1",
+      "topic": "Why Small Creators Are Replacing 4-Hour Filming Days With Script-First AI Workflows",
+      "platform": "RSS / News",
+      "category": "Rising",
+      "sourceUrl": "https://techcrunch.com/category/artificial-intelligence/",
+      "sourceName": "TechCrunch Creator Dispatch",
+      "sourceType": "curated",
+      "discoveredAt": "2026-11-13T05:18:25.892Z",
+      "summary": "Independent founders and educators are shifting production time from camera setup to tight editorial research and multilingual distribution.",
+      "metrics": {
+        "available": false,
+        "note": "Source RSS feed does not expose social engagement counts"
+      },
+      "relevanceScore": 94,
+      "opportunityScore": 91
+    },
+    {
+      "id": "demo_trend_2",
+      "topic": "Hinglish Tech Explainers Outperforming Pure English Reels Across Tier-1 & Tier-2 India",
+      "platform": "Instagram",
+      "category": "Viral",
+      "sourceUrl": "https://instagram.com",
+      "sourceName": "Manual Creator Benchmark Import",
+      "sourceType": "manual",
+      "discoveredAt": "2026-11-13T05:18:25.892Z",
+      "summary": "Conversational bilingual hooks within the first 2.5 seconds show stronger completion curves for technical tutorials.",
+      "metrics": {
+        "available": true,
+        "views": "184K (logged)",
+        "engagementRate": "6.8%",
+        "note": "Creator-imported public post observation"
+      },
+      "relevanceScore": 96,
+      "opportunityScore": 95
+    },
+    {
+      "id": "demo_trend_3",
+      "topic": "Mandatory AI Likeness Provenance & Watermarking Standards for Brand Partnerships",
+      "platform": "RSS / News",
+      "category": "Business",
+      "sourceUrl": "https://www.theverge.com/",
+      "sourceName": "The Verge Media Policy",
+      "sourceType": "curated",
+      "discoveredAt": "2026-11-13T05:18:25.892Z",
+      "summary": "Agencies increasingly require cryptographic consent provenance and clear synthetic disclosure before approving twin campaigns.",
+      "metrics": {
+        "available": false,
+        "note": "Unavailable from publisher feed"
+      },
+      "relevanceScore": 88,
+      "opportunityScore": 85
+    }
+  ],
+  "scripts": [
+    {
+      "id": "demo_script_1",
+      "trendId": "demo_trend_2",
+      "trendTopic": "Hinglish Tech Explainers Outperforming Pure English Reels",
+      "language": "Hinglish",
+      "recommendedFormat": "Talking-Head",
+      "thesis": "Creators lose retention not from bad cameras, but from speaking in textbook English instead of how founders actually think and talk.",
+      "audiencePainPoint": "Spending weekends recording 12 retakes that still get scrolled past in 2 seconds.",
+      "ctaStrategy": "Ask viewers to comment \"SCRIPT\" or share whether they prefer Hinglish breakdowns.",
+      "selectedVariantId": "demo_var_1",
+      "approvalStatus": "approved",
+      "createdAt": "2026-11-13T05:18:25.892Z",
+      "updatedAt": "2026-11-13T05:18:25.892Z",
+      "variants": [
+        {
+          "id": "demo_var_1",
+          "toneName": "Natural & Conversational",
+          "hook3s": "Seedha point pe aate hain — aapki reel log 2 second mein scroll kyun karte hain?",
+          "body": "Aap lighting aur camera upgrade karte rehte ho, lekin audience ko chahiye clarity unki apni bhasha mein. Jab aap complex AI workflow ko simple Hinglish mein break down karte ho, retention turant upar jaata hai.",
+          "cta": "Batayein comments mein: aapka next explainer English mein chahiye ya Hinglish mein?",
+          "wordCount": 58,
+          "estimatedDurationSec": 25
+        },
+        {
+          "id": "demo_var_2",
+          "toneName": "Educational & Authoritative",
+          "hook3s": "Three structural shifts driving higher retention on bilingual tech reels in 2026.",
+          "body": "First, anchor your opening three seconds in a concrete operational problem. Second, match vocabulary to everyday founder conversation rather than formal documentation. Third, deliver one actionable takeaway under thirty seconds.",
+          "cta": "Save this framework before recording your next batch.",
+          "wordCount": 44,
+          "estimatedDurationSec": 19
+        },
+        {
+          "id": "demo_var_3",
+          "toneName": "Entertaining & Engaging",
+          "hook3s": "Maine 4 ghante ki lighting setup chhod di — aur output double ho gaya.",
+          "body": "Sach bolun toh pehle har video ke liye tripod, mic, aur 18 retakes lagte the. Ab focus sirf sharp writing aur clean digital twin delivery pe hai.",
+          "cta": "Follow karein agar aap bhi creator burnout se nikalna chahte hain.",
+          "wordCount": 42,
+          "estimatedDurationSec": 18
+        }
+      ]
+    }
+  ],
+  "auditions": [],
+  "videos": [
+    {
+      "id": "vid_67d791fb",
+      "title": "Why Small Creators Are Replacing 4-Hour Filming Days",
+      "scriptId": "scr_bf30af4e",
+      "trendTopic": "Why Small Creators Are Replacing 4-Hour Filming Days",
+      "qualityTier": "balanced",
+      "voiceProvider": "gemini_flash_tts",
+      "voiceIdentity": "Puck",
+      "visualProvider": "ffmpeg_local",
+      "aspectRatio": "1:1",
+      "format": "Talking-Head",
+      "language": "Hindi",
+      "emotion": "Warm & Editorial",
+      "framing": "Close-Up Studio",
+      "backgroundStyle": "Warm Charcoal",
+      "wardrobeNote": "Tailored charcoal blazer & ivory knit",
+      "speakingSpeed": 1,
+      "voiceIntensity": "Balanced",
+      "subtitlesEnabled": true,
+      "aiDisclosureWatermark": true,
+      "estimatedCostUsd": 0.0105,
+      "actualCostUsd": 0.0105,
+      "approvedPaidCharge": true,
+      "durationSec": 18,
+      "processingMs": 10437,
+      "status": "completed",
+      "reviewStatus": "pending",
+      "videoUrl": "/api/media/videos/vid_67d791fb.mp4",
+      "thumbnailUrl": "/api/media/covers/vid_67d791fb.jpg",
+      "audioUrl": "/api/media/audio/render_tts_1794547492790_61d4.wav",
+      "provenanceNote": "Balanced Mode · Gemini Speech + Local FFmpeg Studio Assembly",
+      "createdAt": "2026-11-13T05:25:03.227Z"
+    },
+    {
+      "id": "demo_video_1",
+      "title": "Hinglish Retention Blueprint — Studio Reel",
+      "scriptId": "demo_script_1",
+      "trendTopic": "Hinglish Tech Explainers Outperforming Pure English Reels",
+      "qualityTier": "local_free",
+      "voiceProvider": "free_hindi_neural",
+      "voiceIdentity": "hi-IN-MadhurNeural",
+      "visualProvider": "ffmpeg_local",
+      "aspectRatio": "9:16",
+      "format": "Talking-Head",
+      "language": "Hinglish",
+      "emotion": "Warm & Editorial",
+      "framing": "Close-Up Studio",
+      "backgroundStyle": "Studio Ivory Linen",
+      "wardrobeNote": "Charcoal wool blazer & ivory knit",
+      "speakingSpeed": 1,
+      "voiceIntensity": "Balanced",
+      "subtitlesEnabled": true,
+      "aiDisclosureWatermark": true,
+      "estimatedCostUsd": 0,
+      "actualCostUsd": 0,
+      "approvedPaidCharge": true,
+      "durationSec": 33.12,
+      "processingMs": 1420,
+      "status": "completed",
+      "reviewStatus": "approved",
+      "videoUrl": "/api/media/videos/demo_reel_portrait.mp4",
+      "thumbnailUrl": "/api/media/covers/demo_reel_portrait.jpg",
+      "provenanceNote": "Free Hindi Neural Voice (Madhur) + 6-Shot FFmpeg Motion Director ($0.00)",
+      "createdAt": "2026-11-13T05:18:25.892Z"
+    },
+    {
+      "id": "demo_video_2",
+      "title": "Consent-First Digital Twin Standards",
+      "trendTopic": "Mandatory AI Likeness Provenance & Watermarking Standards",
+      "qualityTier": "local_free",
+      "voiceProvider": "free_hindi_neural",
+      "voiceIdentity": "en-IN-PrabhatNeural",
+      "visualProvider": "ffmpeg_local",
+      "aspectRatio": "16:9",
+      "format": "Presenter-Style",
+      "language": "English",
+      "emotion": "Authoritative",
+      "framing": "Medium Editorial",
+      "backgroundStyle": "Warm Charcoal",
+      "wardrobeNote": "Charcoal wool blazer & ivory knit",
+      "speakingSpeed": 1,
+      "voiceIntensity": "Measured",
+      "subtitlesEnabled": true,
+      "aiDisclosureWatermark": true,
+      "estimatedCostUsd": 0,
+      "actualCostUsd": 0,
+      "approvedPaidCharge": false,
+      "durationSec": 30,
+      "processingMs": 1180,
+      "status": "completed",
+      "reviewStatus": "pending",
+      "videoUrl": "/api/media/videos/demo_presenter_wide.mp4",
+      "thumbnailUrl": "/api/media/covers/demo_presenter_wide.jpg",
+      "provenanceNote": "Free Indian Neural Voice (Prabhat) + 6-Shot FFmpeg Motion Director ($0.00)",
+      "createdAt": "2026-11-13T05:18:25.892Z"
+    }
+  ],
+  "benchmarks": [
+    {
+      "id": "bm_free_hindi_neural",
+      "providerId": "free_hindi_neural",
+      "providerName": "Free Natural Hindi / Indian Neural Voice ($0.00)",
+      "category": "voice",
+      "tier": "local_free",
+      "referenceImageLabel": "N/A (Audio Only)",
+      "voiceSampleLabel": "Hindi / Hinglish Persona Reference",
+      "scriptExcerpt": "Every creator assumes camera gear drives retention, when clarity in the first three seconds decides everything.",
+      "verified": true,
+      "processingMs": 1603,
+      "resolutionOrSampleRate": "24kHz Mono WAV",
+      "estimatedCostPerMinUsd": 0,
+      "metrics": {
+        "faceSimilarity": null,
+        "voiceSimilarity": null,
+        "lipSync": null,
+        "naturalExpressions": null,
+        "renderingQuality": null
+      },
+      "notes": "Measured $0.00 Hindi neural synthesis (hi-IN-MadhurNeural) in 1603ms. Audition for natural Hindi cadence & pronunciation.",
+      "benchmarkedAt": "2026-11-13T05:42:59.251Z",
+      "sampleOutputUrl": "/api/media/audio/bm_free_hindi_1794548577648.wav",
+      "sampleType": "audio"
+    },
+    {
+      "id": "bm_ffmpeg_local",
+      "providerId": "ffmpeg_local",
+      "providerName": "Local FFmpeg Portrait Assembly",
+      "category": "video",
+      "tier": "local_free",
+      "referenceImageLabel": "Creator Front Studio Portrait",
+      "voiceSampleLabel": "Studio Speech Sample",
+      "scriptExcerpt": "Testing 4-scene FFmpeg motion cuts and audio waveform.",
+      "verified": true,
+      "processingMs": 5759,
+      "resolutionOrSampleRate": "720x1280 H.264",
+      "estimatedCostPerMinUsd": 0,
+      "metrics": {
+        "faceSimilarity": null,
+        "voiceSimilarity": null,
+        "lipSync": null,
+        "naturalExpressions": null,
+        "renderingQuality": null
+      },
+      "notes": "Measured 4-scene FFmpeg Motion Director in 5759ms ($0.00). Inspect xfade cuts, audio waveform, and kinetic captions.",
+      "benchmarkedAt": "2026-11-13T05:32:40.827Z",
+      "sampleOutputUrl": "/api/media/videos/bm_ffmpeg_1794547955068.mp4",
+      "sampleType": "video"
+    },
+    {
+      "id": "bm_gemini_lite_tts",
+      "providerId": "gemini_lite_tts",
+      "providerName": "Gemini 3.8 Flash Lite TTS",
+      "category": "voice",
+      "tier": "balanced",
+      "referenceImageLabel": "N/A (Audio Only)",
+      "voiceSampleLabel": "Creator Reference Voice",
+      "scriptExcerpt": "Three-second creator hook audition.",
+      "verified": false,
+      "processingMs": null,
+      "resolutionOrSampleRate": "24kHz Mono WAV",
+      "estimatedCostPerMinUsd": 0.015,
+      "metrics": {
+        "faceSimilarity": null,
+        "voiceSimilarity": null,
+        "lipSync": null,
+        "naturalExpressions": null,
+        "renderingQuality": null
+      },
+      "notes": "Standard studio voice (not personal voice clone). Run benchmark to audition real latency and output.",
+      "benchmarkedAt": null
+    },
+    {
+      "id": "bm_gemini_flash_tts",
+      "providerId": "gemini_flash_tts",
+      "providerName": "Gemini 3.8 Flash TTS (Expressive)",
+      "category": "voice",
+      "tier": "balanced",
+      "referenceImageLabel": "N/A (Audio Only)",
+      "voiceSampleLabel": "Creator Reference Voice",
+      "scriptExcerpt": "Conversational bilingual Hinglish/English hook.",
+      "verified": false,
+      "processingMs": null,
+      "resolutionOrSampleRate": "24kHz Mono WAV",
+      "estimatedCostPerMinUsd": 0.03,
+      "metrics": {
+        "faceSimilarity": null,
+        "voiceSimilarity": null,
+        "lipSync": null,
+        "naturalExpressions": null,
+        "renderingQuality": null
+      },
+      "notes": "Higher prosody fidelity than Lite TTS. Run benchmark to preview side-by-side.",
+      "benchmarkedAt": null
+    },
+    {
+      "id": "bm_elevenlabs_clone",
+      "providerId": "elevenlabs_webhook",
+      "providerName": "ElevenLabs Personal Voice Clone",
+      "category": "voice",
+      "tier": "premium",
+      "referenceImageLabel": "N/A (Audio Only)",
+      "voiceSampleLabel": "Authorized Personal Clone",
+      "scriptExcerpt": "Multilingual conversational clone test.",
+      "verified": false,
+      "processingMs": null,
+      "resolutionOrSampleRate": "44.1kHz MP3/WAV",
+      "estimatedCostPerMinUsd": 0.18,
+      "metrics": {
+        "faceSimilarity": null,
+        "voiceSimilarity": null,
+        "lipSync": null,
+        "naturalExpressions": null,
+        "renderingQuality": null
+      },
+      "notes": "External connector unconfigured. Configure endpoint in Integrations to run verified benchmark.",
+      "benchmarkedAt": null
+    },
+    {
+      "id": "bm_gemini_omni_veo",
+      "providerId": "gemini_omni_veo",
+      "providerName": "Gemini Omni / Veo + FFmpeg Master",
+      "category": "video",
+      "tier": "premium",
+      "referenceImageLabel": "Creator Front Studio Portrait",
+      "voiceSampleLabel": "Expressive TTS Track",
+      "scriptExcerpt": "Photorealistic animated presenter clip.",
+      "verified": false,
+      "processingMs": null,
+      "resolutionOrSampleRate": "720p MP4 + AAC",
+      "estimatedCostPerMinUsd": 0.45,
+      "metrics": {
+        "faceSimilarity": null,
+        "voiceSimilarity": null,
+        "lipSync": null,
+        "naturalExpressions": null,
+        "renderingQuality": null
+      },
+      "notes": "Paid tier model. Requires explicit cost approval to run side-by-side benchmark.",
+      "benchmarkedAt": null
+    }
+  ],
+  "automationJobs": [
+    {
+      "id": "job_demo_9014",
+      "workflowName": "Twin Render -> Instagram Reels Draft Queue",
+      "eventType": "render.completed",
+      "targetWebhookUrl": "https://n8n.example.internal/webhook/twinforge-reels",
+      "idempotencyKey": "idem_demo_9014",
+      "payloadSummary": "video=demo_video_1 · aspect=9:16 · disclosure=true",
+      "status": "succeeded",
+      "attempts": 1,
+      "maxAttempts": 3,
+      "signaturePreview": "sha256=9f82c1...e4b1",
+      "responseCode": 200,
+      "providerCostUsd": 0.02,
+      "createdAt": "2026-11-13T05:18:25.892Z",
+      "updatedAt": "2026-11-13T05:18:25.892Z",
+      "logs": [
+        "[21:00:02] Prepared signed webhook payload (HMAC-SHA256)",
+        "[21:00:03] Demo simulation receipt acknowledged (HTTP 200)"
+      ]
+    }
+  ],
+  "publishingDrafts": [
+    {
+      "id": "pub_demo_1",
+      "videoId": "demo_video_1",
+      "videoTitle": "Hinglish Retention Blueprint — Studio Reel",
+      "thumbnailUrl": "/api/media/covers/demo_reel_portrait.jpg",
+      "videoUrl": "/api/media/videos/demo_reel_portrait.mp4",
+      "aspectRatio": "9:16",
+      "platform": "Instagram Reels",
+      "caption": "Seedha point pe aate hain: retention camera se nahi, clarity se aata hai. Built with my authorized digital twin.",
+      "hashtags": [
+        "#CreatorEconomy",
+        "#HinglishTech",
+        "#DigitalTwin",
+        "#ContentSystems"
+      ],
+      "scheduledFor": "2026-11-14T05:18",
+      "approvalStatus": "awaiting_approval",
+      "publishStatus": "draft",
+      "statusNote": "Awaiting creator sign-off before external webhook dispatch."
+    }
+  ],
+  "analytics": [
+    {
+      "id": "an_demo_1",
+      "videoId": "demo_video_1",
+      "title": "Hinglish Retention Blueprint — Studio Reel",
+      "platform": "Instagram Reels",
+      "format": "Talking-Head",
+      "language": "Hinglish",
+      "hookType": "Direct Hinglish Question (2.5s)",
+      "aspectRatio": "9:16",
+      "views": 14820,
+      "reach": 12190,
+      "avgWatchSec": 19.4,
+      "retentionPct": 68.2,
+      "shares": 312,
+      "comments": 94,
+      "saves": 540,
+      "followerDelta": 186,
+      "engagementRate": 6.4,
+      "productionCostUsd": 0.02,
+      "loggedAt": "2026-11-13T05:18:25.892Z"
+    },
+    {
+      "id": "an_demo_2",
+      "videoId": "demo_video_2",
+      "title": "Consent-First Digital Twin Standards",
+      "platform": "Facebook Reels",
+      "format": "Presenter-Style",
+      "language": "English",
+      "hookType": "Policy Contrarian Statement",
+      "aspectRatio": "16:9",
+      "views": 5410,
+      "reach": 4680,
+      "avgWatchSec": 15.1,
+      "retentionPct": 54,
+      "shares": 84,
+      "comments": 31,
+      "saves": 122,
+      "followerDelta": 48,
+      "engagementRate": 4.3,
+      "productionCostUsd": 0,
+      "loggedAt": "2026-11-13T05:18:25.892Z"
+    }
+  ],
+  "integrations": [
+    {
+      "id": "free_hindi_neural",
+      "name": "Free Natural Hindi & Indian Neural Voice",
+      "category": "Voice Engine",
+      "tier": "local_free",
+      "description": "Zero-cost neural speech engine for fluent Devanagari Hindi, conversational Hinglish, and Indian English voices (Madhur, Swara, Prabhat, Neerja).",
+      "configured": true,
+      "endpointUrl": "free://neural-hindi-tts",
+      "status": "connected",
+      "capabilities": [
+        "$0.00 Free Tier",
+        "Natural Hindi & Hinglish",
+        "4 Indian Neural Voices",
+        "24kHz WAV Master"
+      ],
+      "supportsVoiceCloning": false,
+      "lastCheckedAt": "2026-11-13T05:42:31.723Z",
+      "notes": "Active in $0.00 Free Tier for Persona Creation & Studio MP4 renders. Distinct from paid personal voice cloning."
+    },
+    {
+      "id": "free_hf_space",
+      "name": "Free Hugging Face ZeroGPU Lip-Sync Space",
+      "category": "Avatar & Lip-Sync",
+      "tier": "local_free",
+      "description": "Optional $0.00 community Gradio Space bridge (e.g. LivePortrait / SadTalker ZeroGPU Space) for neural facial animation.",
+      "configured": false,
+      "endpointUrl": "",
+      "status": "unconfigured",
+      "capabilities": [
+        "$0.00 ZeroGPU",
+        "Neural Lip Sync",
+        "Gradio API Bridge"
+      ],
+      "supportsVoiceCloning": false,
+      "lastCheckedAt": null,
+      "notes": "Paste any public Hugging Face Gradio Space endpoint URL to run free cloud lip-sync when available."
+    },
+    {
+      "id": "free_canvas_animator",
+      "name": "Free Live Motion & Expression Animator",
+      "category": "Avatar & Lip-Sync",
+      "tier": "local_free",
+      "description": "Zero-cost 30fps multi-expression animator driving head sway, eye-blinks, speech-energy mouth crossfades, camera cuts, and kinetic captions.",
+      "configured": true,
+      "endpointUrl": "browser://canvas-motion-director",
+      "status": "connected",
+      "capabilities": [
+        "$0.00 / Render",
+        "Speech-Energy Motion",
+        "Multi-Angle Cuts",
+        "Kinetic Captions"
+      ],
+      "supportsVoiceCloning": false,
+      "lastCheckedAt": "2026-11-13T05:32:23.705Z",
+      "notes": "Runs 100% free in Studio and masters to H.264 MP4 via local FFmpeg."
+    },
+    {
+      "id": "gemini_intelligence",
+      "name": "Gemini 4 Hydrogen & Speech",
+      "category": "LLM Intelligence",
+      "tier": "balanced",
+      "description": "Server-side script generation (EN/HI/Hinglish), speech transcription, and expressive TTS voice auditions.",
+      "configured": true,
+      "endpointUrl": "server://gemini-api",
+      "status": "connected",
+      "capabilities": [
+        "Multilingual Scripts",
+        "Voice Verification STT",
+        "WAV Voice Audition"
+      ],
+      "supportsVoiceCloning": false,
+      "lastCheckedAt": "2026-11-13T05:18:25.893Z",
+      "notes": "Active on server. Standard voice personas only — never mislabelled as personal voice cloning."
+    },
+    {
+      "id": "ffmpeg_local",
+      "name": "Local FFmpeg Mastering Studio",
+      "category": "Avatar & Lip-Sync",
+      "tier": "local_free",
+      "description": "Deterministic server-side MP4 video assembly with portrait framing, audio muxing, subtitles, and provenance watermarks.",
+      "configured": true,
+      "endpointUrl": "local:///usr/bin/ffmpeg",
+      "status": "connected",
+      "capabilities": [
+        "9:16 / 1:1 / 16:9 Render",
+        "AAC Audio Mux",
+        "Subtitle Burn-in",
+        "Cover Frame Extraction"
+      ],
+      "supportsVoiceCloning": false,
+      "lastCheckedAt": "2026-11-13T05:18:25.893Z",
+      "notes": "Local FFmpeg binary verified on server."
+    },
+    {
+      "id": "gemini_omni_veo",
+      "name": "Gemini Omni / Veo Video Generator",
+      "category": "Avatar & Lip-Sync",
+      "tier": "premium",
+      "description": "Photorealistic image-to-video motion generation via Gemini Interactions API. Always gated by explicit cost approval.",
+      "configured": true,
+      "endpointUrl": "server://gemini-omni-1.2-flash",
+      "status": "connected",
+      "capabilities": [
+        "720p Portrait Animation",
+        "Reference Image Conditioning",
+        "FFmpeg Post-Mastering"
+      ],
+      "supportsVoiceCloning": false,
+      "lastCheckedAt": "2026-11-13T05:18:25.893Z",
+      "notes": "Requires paid-tier API key and per-job cost authorization in Video Studio."
+    },
+    {
+      "id": "kokoro_local",
+      "name": "Local Kokoro / Piper TTS Worker",
+      "category": "Voice Engine",
+      "tier": "local_free",
+      "description": "Zero-cost local neural TTS HTTP adapter for draft synthesis and offline experimentation.",
+      "configured": false,
+      "endpointUrl": "",
+      "status": "unconfigured",
+      "capabilities": [
+        "Zero API Cost",
+        "Fast Draft Speech"
+      ],
+      "supportsVoiceCloning": false,
+      "lastCheckedAt": null,
+      "notes": "Optional zero-cost fallback. Configure your local Kokoro or Piper HTTP endpoint URL to enable."
+    },
+    {
+      "id": "elevenlabs_webhook",
+      "name": "ElevenLabs Personal Voice Clone",
+      "category": "Voice Engine",
+      "tier": "premium",
+      "description": "Authorized personal voice cloning connector for Hindi, Hinglish, and English emotional inflection.",
+      "configured": false,
+      "endpointUrl": "",
+      "status": "unconfigured",
+      "capabilities": [
+        "Cloned Voice Identity",
+        "Multilingual Pronunciation",
+        "Emotion Controls"
+      ],
+      "supportsVoiceCloning": true,
+      "lastCheckedAt": null,
+      "notes": "Never substituted silently. Must be explicitly configured and authorized."
+    },
+    {
+      "id": "liveportrait_heygen",
+      "name": "LivePortrait / HeyGen Lip-Sync Worker",
+      "category": "Avatar & Lip-Sync",
+      "tier": "premium",
+      "description": "Dedicated facial expression driving and audio-driven lip-synchronization worker webhook.",
+      "configured": false,
+      "endpointUrl": "",
+      "status": "unconfigured",
+      "capabilities": [
+        "Neural Lip Sync",
+        "Natural Eye Blinking",
+        "Head Motion Driving"
+      ],
+      "supportsVoiceCloning": false,
+      "lastCheckedAt": null,
+      "notes": "Connect a remote LivePortrait GPU endpoint or HeyGen webhook URL."
+    },
+    {
+      "id": "n8n_webhook",
+      "name": "n8n Workflow Orchestrator",
+      "category": "Automation",
+      "tier": "balanced",
+      "description": "HMAC-SHA256 signed webhook dispatch and callback receiver for automated multi-step publishing.",
+      "configured": false,
+      "endpointUrl": "",
+      "status": "unconfigured",
+      "capabilities": [
+        "Idempotent Job Dispatch",
+        "Retry Backoff",
+        "Execution Audit Logs"
+      ],
+      "supportsVoiceCloning": false,
+      "lastCheckedAt": null,
+      "notes": "Configure any webhook URL (e.g., your n8n production trigger) to dispatch live workflow events."
+    },
+    {
+      "id": "social_graph_connector",
+      "name": "Instagram / TikTok / Facebook Publisher",
+      "category": "Social Publishing",
+      "tier": "balanced",
+      "description": "External publishing webhook bridge. Items remain Draft/Scheduled until a delivery receipt is confirmed.",
+      "configured": false,
+      "endpointUrl": "",
+      "status": "unconfigured",
+      "capabilities": [
+        "Reels / TikTok Prep",
+        "Cover Frame Export",
+        "Confirmed Receipt Tracking"
+      ],
+      "supportsVoiceCloning": false,
+      "lastCheckedAt": null,
+      "notes": "Connect an authorized social publishing webhook to execute live post deliveries."
+    }
+  ],
+  "auditLogs": [
+    {
+      "id": "demo_audit_1",
+      "timestamp": "2026-11-13T05:18:25.892Z",
+      "actor": "Aarav Mehta (Demo)",
+      "category": "consent",
+      "action": "Demo Biometric Consent Active",
+      "detail": "Demo showcase workspace active. Switch to Live Mode at top bar to work with your real assets."
+    }
+  ],
+  "settings": {
+    "monthlyBudgetCapUsd": 25,
+    "currentMonthSpendUsd": 0.0334,
+    "requireExplicitPaidApproval": true,
+    "defaultQualityTier": "balanced",
+    "aiDisclosureDefault": true,
+    "watermarkText": "AI DIGITAL TWIN · AUTHORIZED LIKENESS",
+    "sessionLockEnabled": false,
+    "creatorEmail": "Samymehra071213@gmail.com",
+    "rssFeeds": [
+      {
+        "id": "rss_techcrunch_ai",
+        "name": "TechCrunch AI",
+        "url": "https://techcrunch.com/category/artificial-intelligence/feed/",
+        "defaultCategory": "Technology",
+        "enabled": true
+      },
+      {
+        "id": "rss_verge",
+        "name": "The Verge",
+        "url": "https://www.theverge.com/rss/index.xml",
+        "defaultCategory": "Rising",
+        "enabled": true
+      },
+      {
+        "id": "rss_hn_front",
+        "name": "Hacker News Frontpage",
+        "url": "https://hnrss.org/frontpage?count=12",
+        "defaultCategory": "Business",
+        "enabled": true
+      },
+      {
+        "id": "rss_sciencedaily_top",
+        "name": "ScienceDaily Top Science",
+        "url": "https://www.sciencedaily.com/rss/top/science.xml",
+        "defaultCategory": "Science",
+        "enabled": true
+      },
+      {
+        "id": "rss_smithsonian_smart",
+        "name": "Smithsonian Smart News",
+        "url": "https://www.smithsonianmag.com/rss/smart-news/",
+        "defaultCategory": "Knowledge",
+        "enabled": true
+      }
+    ]
+  },
+  "capabilities": {
+    "geminiConfigured": true,
+    "ffmpegAvailable": true
+  },
+  "auditLog": [],
+  "onlineIdeas": []
+}
