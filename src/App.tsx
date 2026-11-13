@@ -41,13 +41,24 @@ export default function App() {
   useEffect(() => {
     let active = true;
     setLoadError('');
-    apiRequest<WorkspaceState>(`/api/workspace?mode=${mode}`, mode)
-      .then((data) => {
+
+    const loadWithRetry = async (attempt = 0) => {
+      try {
+        const data = await apiRequest<WorkspaceState>(`/api/workspace?mode=${mode}`, mode);
         if (active) setWorkspace(data);
-      })
-      .catch((err) => {
-        if (active) setLoadError(err.message || 'Unable to connect to TwinForge Studio server.');
-      });
+      } catch (err: any) {
+        if (!active) return;
+        if (attempt < 4) {
+          setTimeout(() => {
+            if (active) void loadWithRetry(attempt + 1);
+          }, 1200);
+        } else {
+          setLoadError(err.message || 'Unable to connect to TwinForge Studio server.');
+        }
+      }
+    };
+
+    void loadWithRetry(0);
     return () => {
       active = false;
     };

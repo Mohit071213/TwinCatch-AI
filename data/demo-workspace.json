@@ -202,39 +202,6 @@
   "auditions": [],
   "videos": [
     {
-      "id": "vid_67d791fb",
-      "title": "Why Small Creators Are Replacing 4-Hour Filming Days",
-      "scriptId": "scr_bf30af4e",
-      "trendTopic": "Why Small Creators Are Replacing 4-Hour Filming Days",
-      "qualityTier": "balanced",
-      "voiceProvider": "gemini_flash_tts",
-      "voiceIdentity": "Puck",
-      "visualProvider": "ffmpeg_local",
-      "aspectRatio": "1:1",
-      "format": "Talking-Head",
-      "language": "Hindi",
-      "emotion": "Warm & Editorial",
-      "framing": "Close-Up Studio",
-      "backgroundStyle": "Warm Charcoal",
-      "wardrobeNote": "Tailored charcoal blazer & ivory knit",
-      "speakingSpeed": 1,
-      "voiceIntensity": "Balanced",
-      "subtitlesEnabled": true,
-      "aiDisclosureWatermark": true,
-      "estimatedCostUsd": 0.0105,
-      "actualCostUsd": 0.0105,
-      "approvedPaidCharge": true,
-      "durationSec": 18,
-      "processingMs": 10437,
-      "status": "completed",
-      "reviewStatus": "pending",
-      "videoUrl": "/api/media/videos/vid_67d791fb.mp4",
-      "thumbnailUrl": "/api/media/covers/vid_67d791fb.jpg",
-      "audioUrl": "/api/media/audio/render_tts_1794547492790_61d4.wav",
-      "provenanceNote": "Balanced Mode · Gemini Speech + Local FFmpeg Studio Assembly",
-      "createdAt": "2026-11-13T05:25:03.227Z"
-    },
-    {
       "id": "demo_video_1",
       "title": "Hinglish Retention Blueprint — Studio Reel",
       "scriptId": "demo_script_1",
@@ -794,5 +761,36 @@
     "ffmpegAvailable": true
   },
   "auditLog": [],
-  "onlineIdeas": []
+  "onlineIdeas": [
+    {
+      "id": "demo_idea_comedy",
+      "genre": "Comedy",
+      "language": "Hinglish",
+      "title": "Corporate \"Quick 5-Minute Sync\" That Hijacks Your Entire Afternoon",
+      "hookIdea": "Manager jab bole \"just a quick 5-minute sync\", samajh jaao lunch gaya.",
+      "viralTrigger": "Instant workplace relatability across Indian tech & startup reels.",
+      "suggestedAngle": "Contrast the polite calendar invite with the 47-minute screen-share reality using crisp observational timing and a relatable punchline.",
+      "fetchedAt": "2026-11-13T08:33:34.551Z"
+    },
+    {
+      "id": "demo_idea_science",
+      "genre": "Science",
+      "language": "Hindi",
+      "title": "क्यों अंतरिक्ष में आंसू नीचे नहीं गिरते — और आंख पर तैरते रहते हैं",
+      "hookIdea": "अगर आप स्पेस में रोएं, तो आपका एक भी आंसू गाल पर नहीं गिरेगा — जानिए क्यों।",
+      "viralTrigger": "Visual physics curiosity gap that viewers instantly share and rewatch.",
+      "suggestedAngle": "Explain surface tension vs zero gravity in simple conversational Hindi with an everyday Earth kitchen analogy.",
+      "fetchedAt": "2026-11-13T08:33:34.551Z"
+    },
+    {
+      "id": "demo_idea_knowledge",
+      "genre": "Knowledge",
+      "language": "English",
+      "title": "Why Airports Put Mirrors Next to Baggage Claim Belts",
+      "hookIdea": "Airports did not shorten baggage wait times — they hacked human psychology instead.",
+      "viralTrigger": "Hidden everyday design secret viewers notice on their very next flight.",
+      "suggestedAngle": "Unpack the Houston airport walk-time experiment showing how occupied waiting feels twice as fast as idle waiting.",
+      "fetchedAt": "2026-11-13T08:33:34.551Z"
+    }
+  ]
 }

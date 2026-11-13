@@ -141,7 +141,7 @@ export async function renderCanvasMotionVideo(params: CanvasAnimationParams): Pr
     }
   };
 
-  const videoStream = canvas.captureStream(30);
+  const videoStream = canvas.captureStream(24);
   const combinedStream = new MediaStream([
     ...videoStream.getVideoTracks(),
     ...dest.stream.getAudioTracks(),
@@ -154,7 +154,7 @@ export async function renderCanvasMotionVideo(params: CanvasAnimationParams): Pr
   ];
   const mimeType = preferredMimes.find((m) => MediaRecorder.isTypeSupported(m)) || '';
   const recorder = mimeType
-    ? new MediaRecorder(combinedStream, { mimeType, videoBitsPerSecond: 3_200_000 })
+    ? new MediaRecorder(combinedStream, { mimeType, videoBitsPerSecond: 1_350_000 })
     : new MediaRecorder(combinedStream);
 
   const chunks: Blob[] = [];

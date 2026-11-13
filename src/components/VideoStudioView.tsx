@@ -268,39 +268,84 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
           });
 
           setCanvasProgress({ pct: 98, phase: 'Mastering H.264 MP4 via FFmpeg' });
-          const form = new FormData();
-          form.append('video', recorded.blob, 'canvas_motion.webm');
-          form.append('title', title || 'Free Live Motion Twin Video');
-          if (selectedScriptId) form.append('scriptId', selectedScriptId);
-          form.append('trendTopic', title);
-          form.append('qualityTier', qualityTier);
-          form.append('voiceProvider', voiceProvider);
-          form.append('voiceIdentity', voiceIdentity);
-          form.append('aspectRatio', aspectRatio);
-          form.append('format', format);
-          form.append('language', language);
-          form.append('emotion', emotion);
-          form.append('framing', framing);
-          form.append('backgroundStyle', backgroundStyle);
-          form.append('wardrobeNote', wardrobeNote);
-          form.append('speakingSpeed', String(speakingSpeed));
-          form.append('targetDurationSec', String(effectiveDur));
-          form.append('voiceIntensity', voiceIntensity);
-          form.append('subtitlesEnabled', String(subtitlesEnabled));
-          form.append('aiDisclosureWatermark', String(aiWatermark));
-          if (audioForCanvas?.audioUrl) form.append('auditionAudioUrl', audioForCanvas.audioUrl);
-          form.append('actualVoiceCostUsd', String(audioForCanvas?.actualCostUsd || 0));
+          if (recorded.blob.size <= 28 * 1024 * 1024) {
+            try {
+              const form = new FormData();
+              form.append('video', recorded.blob, 'canvas_motion.webm');
+              form.append('title', title || 'Free Live Motion Twin Video');
+              if (selectedScriptId) form.append('scriptId', selectedScriptId);
+              form.append('trendTopic', title);
+              form.append('qualityTier', qualityTier);
+              form.append('voiceProvider', voiceProvider);
+              form.append('voiceIdentity', voiceIdentity);
+              form.append('aspectRatio', aspectRatio);
+              form.append('format', format);
+              form.append('language', language);
+              form.append('emotion', emotion);
+              form.append('framing', framing);
+              form.append('backgroundStyle', backgroundStyle);
+              form.append('wardrobeNote', wardrobeNote);
+              form.append('speakingSpeed', String(speakingSpeed));
+              form.append('targetDurationSec', String(effectiveDur));
+              form.append('voiceIntensity', voiceIntensity);
+              form.append('subtitlesEnabled', String(subtitlesEnabled));
+              form.append('aiDisclosureWatermark', String(aiWatermark));
+              if (audioForCanvas?.audioUrl) form.append('auditionAudioUrl', audioForCanvas.audioUrl);
+              form.append('actualVoiceCostUsd', String(audioForCanvas?.actualCostUsd || 0));
 
-          const uploaded = await apiRequest<{ workspace: WorkspaceState; video: VideoRenderJob }>(
-            '/api/studio/upload-rendered',
+              const uploaded = await apiRequest<{ workspace: WorkspaceState; video: VideoRenderJob }>(
+                '/api/studio/upload-rendered',
+                mode,
+                {
+                  method: 'POST',
+                  body: form,
+                }
+              );
+              onUpdateWorkspace(uploaded.workspace);
+              setLatestVideo(uploaded.video);
+              return;
+            } catch {
+              setCanvasProgress({ pct: 99, phase: 'Completing MP4 via Server Motion Director' });
+            }
+          } else {
+            setCanvasProgress({ pct: 99, phase: 'Recording large — Completing via Server Director' });
+          }
+
+          // Resilient fallback: reuse already-synthesized audio with server 6-shot FFmpeg Motion Director
+          const fallbackRes = await apiRequest<{ workspace: WorkspaceState; video: VideoRenderJob }>(
+            '/api/studio/render',
             mode,
             {
               method: 'POST',
-              body: form,
+              body: JSON.stringify({
+                title,
+                scriptId: selectedScriptId || undefined,
+                trendTopic: title,
+                scriptText,
+                qualityTier,
+                voiceProvider,
+                voiceIdentity,
+                visualProvider: 'ffmpeg_local',
+                aspectRatio,
+                format,
+                language,
+                emotion,
+                framing,
+                backgroundStyle,
+                wardrobeNote,
+                speakingSpeed,
+                targetDurationSec: effectiveDur,
+                voiceIntensity,
+                subtitlesEnabled,
+                aiDisclosureWatermark: aiWatermark,
+                portraitAssetId,
+                auditionAudioUrl: audioForCanvas?.audioUrl,
+                approvedPaidCharge,
+              }),
             }
           );
-          onUpdateWorkspace(uploaded.workspace);
-          setLatestVideo(uploaded.video);
+          onUpdateWorkspace(fallbackRes.workspace);
+          setLatestVideo(fallbackRes.video);
           return;
         }
       }

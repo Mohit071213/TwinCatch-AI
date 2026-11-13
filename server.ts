@@ -193,6 +193,11 @@ async function startServer() {
   app.use('/api/media/covers', express.static(COVERS_DIR));
   app.use('/api/media/demo', express.static(DEMO_ASSETS_DIR));
 
+  // Health check endpoint
+  app.get('/api/health', (_req, res) => {
+    res.json({ ok: true, status: 'ready', uptimeSec: Math.round(process.uptime()) });
+  });
+
   // Get workspace state
   app.get('/api/workspace', async (req, res) => {
     try {
@@ -1331,7 +1336,16 @@ async function startServer() {
       const outThumbName = `${jobId}.jpg`;
       const outVideoPath = path.join(VIDEOS_DIR, outVideoName);
       const outThumbPath = path.join(COVERS_DIR, outThumbName);
-      const audioPath = resolveLocalAssetPath(meta.auditionAudioUrl) || undefined;
+      const candidateAudioPath = resolveLocalAssetPath(meta.auditionAudioUrl);
+      let audioPath: string | undefined;
+      if (candidateAudioPath) {
+        try {
+          await fs.access(candidateAudioPath);
+          audioPath = candidateAudioPath;
+        } catch {
+          audioPath = undefined;
+        }
+      }
 
       const requestedDur = Math.max(
         MIN_VIDEO_DURATION_SEC,
@@ -1964,12 +1978,18 @@ async function startServer() {
   });
 
   // Vite middleware in dev / static dist in production
+  let viteServer: Awaited<ReturnType<typeof createViteServer>> | null = null;
   if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
+    viteServer = await createViteServer({
+      server: {
+        middlewareMode: true,
+        watch: {
+          ignored: ['**/data/**', '**/.git/**', '**/node_modules/**'],
+        },
+      },
       appType: 'spa',
     });
-    app.use(vite.middlewares);
+    app.use(viteServer.middlewares);
   } else {
     const distPath = path.resolve(process.cwd(), 'dist');
     app.use(express.static(distPath));
@@ -1979,9 +1999,19 @@ async function startServer() {
   }
 
   const port = Number(process.env.PORT) || 3000;
-  app.listen(port, '0.0.0.0', () => {
+  const httpServer = app.listen(port, '0.0.0.0', () => {
     console.log(`TwinForge AI Studio listening on http://0.0.0.0:${port}`);
   });
+
+  const shutdown = async () => {
+    httpServer.close(() => {});
+    if (viteServer) {
+      await viteServer.close().catch(() => {});
+    }
+    process.exit(0);
+  };
+  process.once('SIGTERM', () => void shutdown());
+  process.once('SIGINT', () => void shutdown());
 }
 
 startServer().catch((err) => {

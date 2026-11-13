@@ -490,13 +490,15 @@ export async function transcodeUploadedVideoFFmpeg(opts: {
     '-t',
     fullDur.toFixed(2),
     '-vf',
-    'scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=30',
+    'scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=24',
     '-c:v',
     'libx264',
     '-preset',
-    'veryfast',
+    'superfast',
+    '-threads',
+    '2',
     '-crf',
-    '21',
+    '22',
     '-pix_fmt',
     'yuv420p',
     '-c:a',
@@ -508,7 +510,7 @@ export async function transcodeUploadedVideoFFmpeg(opts: {
     opts.outputVideoPath
   );
 
-  await execFileAsync('ffmpeg', args, { timeout: 120000 });
+  await execFileAsync('ffmpeg', args, { timeout: 180000 });
 
   await execFileAsync(
     'ffmpeg',
@@ -518,7 +520,7 @@ export async function transcodeUploadedVideoFFmpeg(opts: {
 
   const durationSec = await getMediaDurationSec(opts.outputVideoPath);
   return {
-    durationSec: durationSec || 8,
+    durationSec: Math.max(MIN_VIDEO_DURATION_SEC, durationSec || fullDur),
     processingMs: Date.now() - start,
   };
 }
