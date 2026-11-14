@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
-import type { VoicePitchWarmth, VoiceProsodyPreset } from '../src/types.ts';
+import type { ProductionStyle, VoicePitchWarmth, VoiceProsodyPreset } from '../src/types.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -160,12 +160,12 @@ function segmentConversationalPhrases(
 
   const pauseProfile =
     preset === 'calm_mentor'
-      ? { sentence: 360, clause: 175 }
+      ? { sentence: 195, clause: 95 }
       : preset === 'lively_creator'
-        ? { sentence: 215, clause: 110 }
+        ? { sentence: 85, clause: 40 }
         : preset === 'friendly_explainer'
-          ? { sentence: 270, clause: 135 }
-          : { sentence: 320, clause: 155 }; // warm_storyteller
+          ? { sentence: 125, clause: 60 }
+          : { sentence: 150, clause: 70 }; // warm_storyteller
 
   const paragraphs = cleaned
     .split(/\n+/)
@@ -176,16 +176,16 @@ function segmentConversationalPhrases(
 
   for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
     const para = paragraphs[pIdx];
-    // Split on sentence endings (Hindi danda ।, ?, !, ..., and non-decimal .) plus conversational dashes/clauses
+    // Split on sentence endings (Hindi danda ।, ?, !, ..., and non-decimal .) plus conversational dashes
     const rawTokens = para
       .split(/(?<=[।?!]|(?<!\d)\.(?!\d)|\.{3}|[—–;])\s+/)
       .map((s) => s.trim())
       .filter(Boolean);
 
-    // Further subdivide long clauses at commas if > 95 chars so inflection stays conversational
+    // Only subdivide very long clauses (>135 chars) so intonation stays flowing and brisk
     const fineSegments: Array<{ text: string; kind: 'sentence' | 'clause' }> = [];
     for (const token of rawTokens) {
-      if (token.length > 95 && token.includes(',')) {
+      if (token.length > 135 && token.includes(',')) {
         const subParts = token.split(/(?<=,)\s+/).map((x) => x.trim()).filter(Boolean);
         subParts.forEach((sub, sIdx) => {
           const isLastSub = sIdx === subParts.length - 1;
@@ -200,13 +200,10 @@ function segmentConversationalPhrases(
       }
     }
 
-    // Merge tiny <16 char fragments into adjacent phrases to preserve fluid intonation
+    // Merge short <38 char fragments so speaker flows cleanly instead of pausing every few words
     const merged: Array<{ text: string; kind: 'sentence' | 'clause' }> = [];
     for (const seg of fineSegments) {
-      if (merged.length > 0 && seg.text.length < 16) {
-        merged[merged.length - 1].text = `${merged[merged.length - 1].text} ${seg.text}`;
-        merged[merged.length - 1].kind = seg.kind;
-      } else if (merged.length > 0 && merged[merged.length - 1].text.length < 18) {
+      if (merged.length > 0 && (seg.text.length < 34 || merged[merged.length - 1].text.length < 38)) {
         merged[merged.length - 1].text = `${merged[merged.length - 1].text} ${seg.text}`;
         merged[merged.length - 1].kind = seg.kind;
       } else {
@@ -218,9 +215,9 @@ function segmentConversationalPhrases(
       const isLastInPara = idx === merged.length - 1;
       const isVeryLast = pIdx === paragraphs.length - 1 && isLastInPara;
       const pauseAfterMs = isVeryLast
-        ? 90
+        ? 45
         : isLastInPara && paragraphs.length > 1
-          ? pauseProfile.sentence + 85
+          ? pauseProfile.sentence + 40
           : m.kind === 'clause'
             ? pauseProfile.clause
             : pauseProfile.sentence;
@@ -228,7 +225,7 @@ function segmentConversationalPhrases(
     });
   }
 
-  return phrases.length > 0 ? phrases : [{ text: cleaned, pauseAfterMs: 90 }];
+  return phrases.length > 0 ? phrases : [{ text: cleaned, pauseAfterMs: 45 }];
 }
 
 export async function synthesizeEdgeNeuralSpeechWav(params: {
@@ -252,28 +249,28 @@ export async function synthesizeEdgeNeuralSpeechWav(params: {
   const preset: VoiceProsodyPreset = params.prosodyPreset || 'warm_storyteller';
   const presetDefaults =
     preset === 'calm_mentor'
-      ? { pace: 0.92, warmth: 'warm' as VoicePitchWarmth }
+      ? { pace: 1.0, warmth: 'warm' as VoicePitchWarmth }
       : preset === 'lively_creator'
-        ? { pace: 1.04, warmth: 'bright' as VoicePitchWarmth }
+        ? { pace: 1.15, warmth: 'bright' as VoicePitchWarmth }
         : preset === 'friendly_explainer'
-          ? { pace: 0.98, warmth: 'natural' as VoicePitchWarmth }
-          : { pace: 0.95, warmth: 'warm' as VoicePitchWarmth };
+          ? { pace: 1.1, warmth: 'natural' as VoicePitchWarmth }
+          : { pace: 1.05, warmth: 'warm' as VoicePitchWarmth };
 
   const effectivePace = Math.max(
     0.85,
-    Math.min(1.15, Number(params.speakingSpeed) || presetDefaults.pace)
+    Math.min(1.32, Number(params.speakingSpeed) || presetDefaults.pace)
   );
   const warmth: VoicePitchWarmth = params.pitchWarmth || presetDefaults.warmth;
   const naturalPauses = params.naturalPauses !== false;
 
   const ratePct = Math.round((effectivePace - 1.0) * 100);
   const rateStr = `${ratePct >= 0 ? '+' : ''}${ratePct}%`;
-  const pitchStr = warmth === 'warm' ? '-4Hz' : warmth === 'bright' ? '+4Hz' : '+0Hz';
+  const pitchStr = warmth === 'warm' ? '-3Hz' : warmth === 'bright' ? '+4Hz' : '+0Hz';
 
   const phrases = segmentConversationalPhrases(params.text.slice(0, 2200), preset, naturalPauses);
   const tts = new MsEdgeTTS({ connectionTimeoutMs: 12000, synthesisTimeoutMs: 25000 });
 
-  const pcmParts: Buffer[] = [msToSilencePcm24k(60)]; // smooth 60ms head lead-in
+  const pcmParts: Buffer[] = [msToSilencePcm24k(25)]; // crisp 25ms lead-in
   try {
     await tts.setMetadata(voiceUsed, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
 
@@ -418,6 +415,14 @@ export interface FfmpegRenderOptions {
   sceneImagePaths?: string[];
   sceneBackgroundPaths?: string[];
   presenterMode?: 'auto_match' | 'faceless_broll' | 'twin_owner' | 'cast_ananya' | 'cast_meera' | 'cast_kabir';
+  productionStyle?: ProductionStyle;
+  beatOverlays?: Array<{
+    calloutText?: string;
+    subBadge?: string;
+    isPunchline?: boolean;
+    startPct: number;
+    endPct: number;
+  }>;
   audioPath?: string;
   durationSec: number;
   aspectRatio: '9:16' | '1:1' | '16:9';
@@ -518,9 +523,10 @@ export async function renderTwinVideoFFmpeg(opts: FfmpegRenderOptions): Promise<
     );
     audioInputIdx = 1;
   } else {
-    // 6-shot dynamic editorial choreography across >=30s with smooth xfade transitions
+    // 6-shot dynamic genre choreography across >=30s with style-matched cuts & punch zooms
+    const style = opts.productionStyle || 'creator_reel';
     const shotCount = 6;
-    const xfadeDur = 0.4;
+    const xfadeDur = style === 'comedy_skit' ? 0.22 : style === 'story_cinema' ? 0.52 : 0.36;
     const rawShotDur = Number(((targetDuration + xfadeDur * (shotCount - 1)) / shotCount).toFixed(2));
     const shotFrames = Math.max(60, Math.round(rawShotDur * fps));
 
@@ -552,22 +558,35 @@ export async function renderTwinVideoFFmpeg(opts: FfmpegRenderOptions): Promise<
     }
     audioInputIdx = shotCount;
 
+    const zoomRate = style === 'comedy_skit' ? 0.0032 : style === 'visual_explainer' ? 0.0016 : 0.002;
+    const eqFilter =
+      style === 'comedy_skit'
+        ? 'eq=contrast=1.08:saturation=1.18:brightness=0.02'
+        : style === 'story_cinema'
+          ? 'eq=contrast=1.09:saturation=0.90:brightness=-0.02'
+          : 'eq=contrast=1.05:saturation=1.04';
+
     const shotMoves = [
-      `zoompan=z='if(eq(on,1),${framingStartZoom},min(zoom+0.0018,${(framingStartZoom + 0.22).toFixed(2)}))':x='iw/2-(iw/zoom/2)':y='ih/2.5-(ih/zoom/2.5)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`,
+      `zoompan=z='if(eq(on,1),${framingStartZoom},min(zoom+${zoomRate},${(framingStartZoom + 0.26).toFixed(2)}))':x='iw/2-(iw/zoom/2)':y='ih/2.5-(ih/zoom/2.5)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`,
       `zoompan=z='${(framingStartZoom + 0.14).toFixed(2)}':x='(iw-iw/zoom)*(on/${shotFrames})':y='ih/2.35-(ih/zoom/2.35)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`,
-      `zoompan=z='if(eq(on,1),${(framingStartZoom + 0.24).toFixed(2)},max(zoom-0.0018,${framingStartZoom.toFixed(2)}))':x='iw/2-(iw/zoom/2)':y='ih/2.2-(ih/zoom/2.2)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`,
+      `zoompan=z='if(eq(on,1),${(framingStartZoom + 0.25).toFixed(2)},max(zoom-${zoomRate},${framingStartZoom.toFixed(2)}))':x='iw/2-(iw/zoom/2)':y='ih/2.2-(ih/zoom/2.2)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`,
       `zoompan=z='${(framingStartZoom + 0.12).toFixed(2)}':x='(iw-iw/zoom)*(1-on/${shotFrames})':y='ih/2.4-(ih/zoom/2.4)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`,
-      `zoompan=z='if(eq(on,1),${(framingStartZoom + 0.05).toFixed(2)},min(zoom+0.0016,${(framingStartZoom + 0.20).toFixed(2)}))':x='iw/2-(iw/zoom/2)':y='ih/2.45-(ih/zoom/2.45)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`,
-      `zoompan=z='if(eq(on,1),${(framingStartZoom + 0.20).toFixed(2)},max(zoom-0.0015,${framingStartZoom.toFixed(2)}))':x='(iw-iw/zoom)*(on/${shotFrames})':y='ih/2.3-(ih/zoom/2.3)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`,
+      `zoompan=z='if(eq(on,1),${(framingStartZoom + 0.04).toFixed(2)},min(zoom+${(zoomRate * 1.1).toFixed(4)},${(framingStartZoom + 0.24).toFixed(2)}))':x='iw/2-(iw/zoom/2)':y='ih/2.45-(ih/zoom/2.45)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`,
+      `zoompan=z='if(eq(on,1),${(framingStartZoom + 0.22).toFixed(2)},max(zoom-0.0018,${framingStartZoom.toFixed(2)}))':x='(iw-iw/zoom)*(on/${shotFrames})':y='ih/2.3-(ih/zoom/2.3)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`,
     ];
 
     for (let i = 0; i < shotCount; i++) {
       filters.push(
-        `[${i}:v]scale=${w * 2}:${h * 2}:force_original_aspect_ratio=increase,crop=${w * 2}:${h * 2},${shotMoves[i]},settb=AVTB,setsar=1,format=yuv420p,eq=contrast=1.04:saturation=0.98[v${i}]`
+        `[${i}:v]scale=${w * 2}:${h * 2}:force_original_aspect_ratio=increase,crop=${w * 2}:${h * 2},${shotMoves[i]},settb=AVTB,setsar=1,format=yuv420p,${eqFilter}[v${i}]`
       );
     }
 
-    const transitions = ['smoothleft', 'slideup', 'smoothright', 'dissolve', 'circleopen'];
+    const transitions =
+      style === 'comedy_skit'
+        ? ['wipeleft', 'wiperight', 'slidedown', 'slideup', 'radial']
+        : style === 'story_cinema'
+          ? ['dissolve', 'fadeblack', 'dissolve', 'smoothleft', 'dissolve']
+          : ['smoothleft', 'slideup', 'smoothright', 'dissolve', 'circleopen'];
     let prev = 'v0';
     for (let i = 1; i < shotCount; i++) {
       const offset = Number((i * (rawShotDur - xfadeDur)).toFixed(2));
@@ -646,20 +665,45 @@ export async function renderTwinVideoFFmpeg(opts: FfmpegRenderOptions): Promise<
       lastTag = 'wm';
     }
 
-    // Animated Beat Callout Badges synced to the 3 story phases
-    const b1End = Number((targetDuration * 0.3).toFixed(2));
-    const b2End = Number((targetDuration * 0.72).toFixed(2));
-    const beatBadgeSize = Math.max(12, Math.round(w * 0.018));
-    filters.push(
-      `[${lastTag}]drawtext=text='01 HOOK':x=${w - 118}:y=28:fontsize=${beatBadgeSize}:fontcolor=0x1A1917:box=1:boxcolor=0xB69A65@0.94:boxborderw=7:enable='between(t,0,${b1End})'[beat1]`
-    );
-    filters.push(
-      `[beat1]drawtext=text='02 INSIGHT':x=${w - 134}:y=28:fontsize=${beatBadgeSize}:fontcolor=0x1A1917:box=1:boxcolor=0xB69A65@0.94:boxborderw=7:enable='between(t,${b1End},${b2End})'[beat2]`
-    );
-    filters.push(
-      `[beat2]drawtext=text='03 ACTION':x=${w - 130}:y=28:fontsize=${beatBadgeSize}:fontcolor=0x1A1917:box=1:boxcolor=0xB69A65@0.94:boxborderw=7:enable='between(t,${b2End},${targetDuration.toFixed(2)})'[beat3]`
-    );
-    lastTag = 'beat3';
+    // Genre-specific on-screen visual punchline / fact callout overlays per beat
+    const callouts = (opts.beatOverlays || []).filter((b) => b.calloutText).slice(0, 6);
+    if (callouts.length > 0) {
+      const style = opts.productionStyle || 'creator_reel';
+      const boxBg =
+        style === 'comedy_skit'
+          ? '0xE09F5A@0.95'
+          : style === 'visual_explainer'
+            ? '0x15252E@0.92'
+            : '0x1A1917@0.88';
+      const boxFg = style === 'comedy_skit' ? '0x1A1917' : '0xF6F3EC';
+      const calloutFont = Math.max(17, Math.round(w * 0.029));
+      const yCallout = style === 'comedy_skit' ? 84 : h - barHeight - 62;
+
+      callouts.forEach((b, bIdx) => {
+        const sTime = Number((b.startPct * targetDuration).toFixed(2));
+        const eTime = Number((b.endPct * targetDuration).toFixed(2));
+        const txt = escapeDrawtext((b.calloutText || '').slice(0, 34));
+        const nextTag = `co_${bIdx}`;
+        filters.push(
+          `[${lastTag}]drawtext=text='${txt}':x=(w-text_w)/2:y=${yCallout}:fontsize=${calloutFont}:fontcolor=${boxFg}:box=1:boxcolor=${boxBg}:boxborderw=12:enable='between(t,${sTime},${eTime})'[${nextTag}]`
+        );
+        lastTag = nextTag;
+      });
+    } else {
+      const b1End = Number((targetDuration * 0.3).toFixed(2));
+      const b2End = Number((targetDuration * 0.72).toFixed(2));
+      const beatBadgeSize = Math.max(12, Math.round(w * 0.018));
+      filters.push(
+        `[${lastTag}]drawtext=text='01 HOOK':x=${w - 118}:y=28:fontsize=${beatBadgeSize}:fontcolor=0x1A1917:box=1:boxcolor=0xB69A65@0.94:boxborderw=7:enable='between(t,0,${b1End})'[beat1]`
+      );
+      filters.push(
+        `[beat1]drawtext=text='02 INSIGHT':x=${w - 134}:y=28:fontsize=${beatBadgeSize}:fontcolor=0x1A1917:box=1:boxcolor=0xB69A65@0.94:boxborderw=7:enable='between(t,${b1End},${b2End})'[beat2]`
+      );
+      filters.push(
+        `[beat2]drawtext=text='03 ACTION':x=${w - 130}:y=28:fontsize=${beatBadgeSize}:fontcolor=0x1A1917:box=1:boxcolor=0xB69A65@0.94:boxborderw=7:enable='between(t,${b2End},${targetDuration.toFixed(2)})'[beat3]`
+      );
+      lastTag = 'beat3';
+    }
 
     if (opts.subtitlesEnabled) {
       const titleTag = escapeDrawtext(opts.title.slice(0, 42));

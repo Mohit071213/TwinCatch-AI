@@ -9,6 +9,7 @@ import type {
   CostEstimate,
   FaceCategory,
   PresenterVisualMode,
+  ProductionStyle,
   QualityTier,
   RewriteAction,
   ScriptGenre,
@@ -854,6 +855,7 @@ async function startServer() {
         prosodyPreset,
         pitchWarmth,
         naturalPauses,
+        productionStyle,
       } = req.body as {
         text: string;
         provider: VoiceProviderId;
@@ -864,6 +866,7 @@ async function startServer() {
         prosodyPreset?: any;
         pitchWarmth?: any;
         naturalPauses?: boolean;
+        productionStyle?: ProductionStyle;
       };
 
       if (!text || !text.trim()) {
@@ -881,13 +884,20 @@ async function startServer() {
       if (provider === 'free_hindi_neural') {
         try {
           const persona = state.twin.personality;
+          const isComedy = productionStyle === 'comedy_skit';
+          const effectiveSpeed = isComedy
+            ? Math.max(1.12, Number(speakingSpeed) || persona.voicePace || 1.14)
+            : Number(speakingSpeed) || persona.voicePace || 1.08;
+          const effectivePreset =
+            prosodyPreset ||
+            (isComedy ? 'lively_creator' : persona.voiceProsodyPreset || 'friendly_explainer');
           const edgeRes = await synthesizeEdgeNeuralSpeechWav({
             text: text.slice(0, 2200),
             voiceIdentity: voiceIdentity || persona.preferredVoiceId || 'en-US-AndrewMultilingualNeural',
             language: language || 'Hindi',
-            speakingSpeed: Number(speakingSpeed) || persona.voicePace || 0.95,
-            prosodyPreset: prosodyPreset || persona.voiceProsodyPreset || 'warm_storyteller',
-            pitchWarmth: pitchWarmth || persona.voicePitchWarmth || 'warm',
+            speakingSpeed: effectiveSpeed,
+            prosodyPreset: effectivePreset,
+            pitchWarmth: pitchWarmth || (isComedy ? 'bright' : persona.voicePitchWarmth || 'warm'),
             naturalPauses: typeof naturalPauses === 'boolean' ? naturalPauses : persona.naturalPausesEnabled !== false,
             outputWavPath: outPath,
           });
@@ -1054,16 +1064,27 @@ async function startServer() {
     try {
       const mode = resolveMode(req);
       const state = await readWorkspace(mode);
-      const { title, scriptText, language, backgroundStyle, presenterMode, voiceIdentity, portraitAssetId } =
-        req.body as {
-          title?: string;
-          scriptText?: string;
-          language?: TwinLanguage;
-          backgroundStyle?: string;
-          presenterMode?: PresenterVisualMode;
-          voiceIdentity?: string;
-          portraitAssetId?: string;
-        };
+      const {
+        title,
+        scriptText,
+        language,
+        format,
+        backgroundStyle,
+        presenterMode,
+        productionStyle,
+        voiceIdentity,
+        portraitAssetId,
+      } = req.body as {
+        title?: string;
+        scriptText?: string;
+        language?: TwinLanguage;
+        format?: VideoFormatType;
+        backgroundStyle?: string;
+        presenterMode?: PresenterVisualMode;
+        productionStyle?: ProductionStyle;
+        voiceIdentity?: string;
+        portraitAssetId?: string;
+      };
 
       const imageAssets = state.twin.faceAssets
         .filter((f) => !/\.(mp4|mov|webm)$/i.test(f.url))
@@ -1077,8 +1098,10 @@ async function startServer() {
         title: String(title || 'TwinForge Studio Production'),
         scriptText: String(scriptText || title || ''),
         language: language || state.twin.personality.primaryLanguage,
+        format,
         backgroundStyle: backgroundStyle || 'Auto-Match Script Theme',
         presenterMode: presenterMode || 'auto_match',
+        productionStyle: productionStyle || 'auto_genre',
         voiceIdentity: voiceIdentity || state.twin.personality.preferredVoiceId,
         mode,
         twinFaceImageAssets: imageAssets,
@@ -1090,6 +1113,7 @@ async function startServer() {
         presenterModeResolved: planned.presenter.presenterModeResolved,
         presenterLabel: planned.presenter.presenterLabel,
         presenterImageUrls: planned.presenter.presenterImageUrls,
+        productionStyleResolved: planned.productionStyleResolved,
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Visual planning failed.' });
@@ -1141,6 +1165,7 @@ async function startServer() {
         framing: 'Close-Up Studio' | 'Medium Editorial' | 'Presenter Bust';
         backgroundStyle: string;
         presenterMode?: PresenterVisualMode;
+        productionStyle?: ProductionStyle;
         wardrobeNote: string;
         speakingSpeed: number;
         voiceIntensity: 'Measured' | 'Balanced' | 'Dynamic';
@@ -1172,7 +1197,7 @@ async function startServer() {
         });
       }
 
-      // Plan script-matched backgrounds & diverse presenter (auto-matched to voice/script or faceless)
+      // Plan script-matched backgrounds, genre production style & diverse presenter
       const twinFaceImgAssets = state.twin.faceAssets
         .filter((f) => !/\.(mp4|mov|webm)$/i.test(f.url))
         .map((f) => ({
@@ -1185,8 +1210,10 @@ async function startServer() {
         title: title || 'TwinForge Studio Production',
         scriptText: scriptText || title || '',
         language: language || state.twin.personality.primaryLanguage,
+        format: format || 'Talking-Head',
         backgroundStyle: backgroundStyle || 'Auto-Match Script Theme',
         presenterMode: (req.body as any).presenterMode || 'auto_match',
+        productionStyle: (req.body as any).productionStyle || 'auto_genre',
         voiceIdentity: voiceIdentity || state.twin.personality.preferredVoiceId,
         mode,
         twinFaceImageAssets: twinFaceImgAssets,
@@ -1217,14 +1244,21 @@ async function startServer() {
           const wavName = `render_hindi_${Date.now()}_${crypto.randomUUID().slice(0, 4)}.wav`;
           const wavOut = path.join(AUDIO_DIR, wavName);
           const persona = state.twin.personality;
+          const isComedy = plannedVisuals.productionStyleResolved === 'comedy_skit';
+          const effectiveSpeed = isComedy
+            ? Math.max(1.12, Number(speakingSpeed) || persona.voicePace || 1.14)
+            : Number(speakingSpeed) || persona.voicePace || 1.08;
+          const effectivePreset =
+            (req.body as any).prosodyPreset ||
+            (isComedy ? 'lively_creator' : persona.voiceProsodyPreset || 'friendly_explainer');
           try {
             await synthesizeEdgeNeuralSpeechWav({
               text: spokenText.slice(0, 2200),
               voiceIdentity: voiceIdentity || persona.preferredVoiceId || 'en-US-AndrewMultilingualNeural',
               language: language || 'Hindi',
-              speakingSpeed: Number(speakingSpeed) || persona.voicePace || 0.95,
-              prosodyPreset: (req.body as any).prosodyPreset || persona.voiceProsodyPreset || 'warm_storyteller',
-              pitchWarmth: (req.body as any).pitchWarmth || persona.voicePitchWarmth || 'warm',
+              speakingSpeed: effectiveSpeed,
+              prosodyPreset: effectivePreset,
+              pitchWarmth: (req.body as any).pitchWarmth || (isComedy ? 'bright' : persona.voicePitchWarmth || 'warm'),
               naturalPauses:
                 typeof (req.body as any).naturalPauses === 'boolean'
                   ? (req.body as any).naturalPauses
@@ -1336,6 +1370,15 @@ async function startServer() {
           sceneImagePaths,
           sceneBackgroundPaths,
           presenterMode: plannedVisuals.presenter.presenterModeResolved,
+          productionStyle: plannedVisuals.productionStyleResolved,
+          beatOverlays: plannedVisuals.beats.map((b) => ({
+            headline: b.headline,
+            calloutText: b.calloutText,
+            subBadge: b.subBadge,
+            isPunchline: b.isPunchline,
+            startPct: b.startPct,
+            endPct: b.endPct,
+          })),
           audioPath,
           durationSec: estSec,
           aspectRatio: aspectRatio || '9:16',
@@ -1354,9 +1397,9 @@ async function startServer() {
         provenanceNote =
           qualityTier === 'local_free'
             ? voiceProvider === 'free_hindi_neural'
-              ? `Free Natural Hindi Neural (${voiceIdentity || 'Andrew'}) · ${plannedVisuals.presenter.presenterLabel} · 6-Scene Script B-Roll ($0.00)`
-              : `Free 6-Shot Script B-Roll Director · ${plannedVisuals.presenter.presenterLabel} ($0.00)`
-            : `Balanced Mode · Gemini Speech · ${plannedVisuals.presenter.presenterLabel}`;
+              ? `Free Natural Hindi Neural (${voiceIdentity || 'Andrew'}) · ${plannedVisuals.productionStyleResolved.replace('_', ' ')} · ${plannedVisuals.presenter.presenterLabel} ($0.00)`
+              : `Free 6-Shot ${plannedVisuals.productionStyleResolved.replace('_', ' ')} Director · ${plannedVisuals.presenter.presenterLabel} ($0.00)`
+            : `Balanced Mode · ${plannedVisuals.productionStyleResolved.replace('_', ' ')} · ${plannedVisuals.presenter.presenterLabel}`;
       }
 
       const processingMs = Date.now() - startMs;
@@ -1378,6 +1421,7 @@ async function startServer() {
         framing: framing || 'Close-Up Studio',
         backgroundStyle: backgroundStyle || 'Auto-Match Script Theme',
         presenterMode: plannedVisuals.presenter.presenterModeResolved,
+        productionStyle: plannedVisuals.productionStyleResolved,
         wardrobeNote: wardrobeNote || 'Studio Attire',
         speakingSpeed: Number(speakingSpeed) || 1.0,
         voiceIntensity: voiceIntensity || 'Balanced',
@@ -1479,6 +1523,7 @@ async function startServer() {
         framing: (meta.framing as any) || 'Close-Up Studio',
         backgroundStyle: meta.backgroundStyle || 'Auto-Match Script Theme',
         presenterMode: (meta.presenterMode as PresenterVisualMode) || 'auto_match',
+        productionStyle: (meta.productionStyle as ProductionStyle) || 'auto_genre',
         wardrobeNote: meta.wardrobeNote || 'Studio Attire',
         speakingSpeed: Number(meta.speakingSpeed) || 1.0,
         voiceIntensity: (meta.voiceIntensity as any) || 'Balanced',

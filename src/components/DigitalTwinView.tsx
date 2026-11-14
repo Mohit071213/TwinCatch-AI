@@ -804,7 +804,7 @@ export const DigitalTwinView: React.FC<DigitalTwinViewProps> = ({
               const selectedMeta = getFreeHindiVoiceOption(personality.preferredVoiceId);
               const activePreset = personality.voiceProsodyPreset || 'warm_storyteller';
               const activeWarmth = personality.voicePitchWarmth || 'warm';
-              const activePace = personality.voicePace ?? 0.95;
+              const activePace = personality.voicePace ?? 1.08;
               const pausesOn = personality.naturalPausesEnabled !== false;
               const presetInfo = VOICE_PROSODY_PRESETS.find((p) => p.id === activePreset);
               return (
@@ -877,8 +877,8 @@ export const DigitalTwinView: React.FC<DigitalTwinViewProps> = ({
                       <input
                         type="range"
                         min={0.85}
-                        max={1.15}
-                        step={0.01}
+                        max={1.3}
+                        step={0.05}
                         value={activePace}
                         onChange={(e) =>
                           setPersonality({

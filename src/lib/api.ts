@@ -17,7 +17,8 @@ export async function apiRequest<T = WorkspaceState>(
   });
 
   const contentType = res.headers.get('content-type') || '';
-  const data = contentType.includes('application/json') ? await res.json() : await res.text();
+  const isJson = contentType.includes('application/json');
+  const data = isJson ? await res.json() : await res.text();
 
   if (!res.ok) {
     const msg = typeof data === 'object' && data?.error ? data.error : `Request failed (${res.status})`;
@@ -25,6 +26,10 @@ export async function apiRequest<T = WorkspaceState>(
     err.status = res.status;
     err.payload = data;
     throw err;
+  }
+
+  if (url.startsWith('/api/') && !isJson) {
+    throw new Error('Studio API is temporarily reloading. Please try again in a moment.');
   }
 
   return data as T;

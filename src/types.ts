@@ -287,6 +287,20 @@ export type BackgroundStyleType =
   | 'Cosmic & Science Lab'
   | 'Warm Comedy Stage';
 
+export type ProductionStyle =
+  | 'auto_genre'
+  | 'comedy_skit'
+  | 'visual_explainer'
+  | 'story_cinema'
+  | 'creator_reel';
+
+export type VisualCardType =
+  | 'reaction_chat'
+  | 'stat_callout'
+  | 'comparison_split'
+  | 'comic_bubble'
+  | 'kinetic_quote';
+
 export interface SceneVisualBeat {
   beatIndex: number;
   startPct: number;
@@ -306,6 +320,10 @@ export interface SceneVisualBeat {
   bgHex: string;
   accentHex: string;
   imageUrl?: string;
+  visualCardType?: VisualCardType;
+  calloutText?: string;
+  subBadge?: string;
+  isPunchline?: boolean;
 }
 
 export interface VideoRenderJob {
@@ -324,6 +342,7 @@ export interface VideoRenderJob {
   framing: 'Close-Up Studio' | 'Medium Editorial' | 'Presenter Bust';
   backgroundStyle: BackgroundStyleType | string;
   presenterMode?: PresenterVisualMode;
+  productionStyle?: ProductionStyle;
   wardrobeNote: string;
   speakingSpeed: number;
   voiceIntensity: 'Measured' | 'Balanced' | 'Dynamic';

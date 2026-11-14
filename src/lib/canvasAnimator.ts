@@ -1,9 +1,17 @@
-import type { PresenterVisualMode, SceneVisualBeat, TwinLanguage } from '../types';
+import type {
+  PresenterVisualMode,
+  ProductionStyle,
+  SceneVisualBeat,
+  TwinLanguage,
+  VideoFormatType,
+} from '../types';
 
 export interface CanvasAnimationParams {
   imageUrls: string[];
   visualBeats?: SceneVisualBeat[];
   presenterMode?: PresenterVisualMode;
+  productionStyle?: ProductionStyle;
+  format?: VideoFormatType;
   audioUrl?: string;
   title: string;
   scriptText: string;
@@ -18,6 +26,40 @@ export interface CanvasAnimationParams {
   targetDurationSec?: number;
   previewCanvas?: HTMLCanvasElement | null;
   onProgress?: (pct: number, phaseLabel: string) => void;
+}
+
+type ResolvedStyle = Exclude<ProductionStyle, 'auto_genre'>;
+
+function resolveClientProductionStyle(params: CanvasAnimationParams): ResolvedStyle {
+  if (
+    params.productionStyle === 'comedy_skit' ||
+    params.productionStyle === 'visual_explainer' ||
+    params.productionStyle === 'story_cinema' ||
+    params.productionStyle === 'creator_reel'
+  ) {
+    return params.productionStyle;
+  }
+  const text = `${params.title} ${params.scriptText}`.toLowerCase();
+  if (
+    params.format === 'Original Reaction' ||
+    params.backgroundStyle === 'Warm Comedy Stage' ||
+    /\b(comedy|funny|laugh|skit|meme|joke|boss|manager|sync|coffee|monday|traffic|relatable)\b|हंसी|कॉमेडी|बॉस|ऑफिस|मज़ाक/.test(
+      text
+    )
+  ) {
+    return 'comedy_skit';
+  }
+  if (
+    params.format === 'Educational' ||
+    params.backgroundStyle === 'Cosmic & Science Lab' ||
+    /\b(space|science|physics|brain|neuron|quantum|psychology|trick|myth|reality|secret|finance|money|invest|study|research)\b|विज्ञान|दिमाग|पैसा|रिसर्च/.test(
+      text
+    )
+  ) {
+    return 'visual_explainer';
+  }
+  if (params.format === 'Storytelling') return 'story_cinema';
+  return 'creator_reel';
 }
 
 function getDimensions(aspect: '9:16' | '1:1' | '16:9'): { w: number; h: number } {
@@ -125,7 +167,8 @@ function drawThematicAtmosphere(
   t: number,
   mood: SceneVisualBeat['themeMood'],
   bgStyle: string,
-  speechEnergy: number
+  speechEnergy: number,
+  style: ResolvedStyle
 ) {
   const g = ctx.createLinearGradient(0, 0, w * 0.4, h);
   if (bgStyle === 'Studio Ivory Linen') {
@@ -134,16 +177,17 @@ function drawThematicAtmosphere(
   } else if (bgStyle === 'Architectural Daylight') {
     g.addColorStop(0, '#E8E3D9');
     g.addColorStop(1, '#C9C0AE');
+  } else if (style === 'comedy_skit' || mood === 'comedy_office' || bgStyle === 'Warm Comedy Stage') {
+    g.addColorStop(0, '#2F1C10');
+    g.addColorStop(0.6, '#3D2212');
+    g.addColorStop(1, '#1E140E');
   } else if (mood === 'cosmic_space' || bgStyle === 'Cosmic & Science Lab') {
     g.addColorStop(0, '#0B1021');
     g.addColorStop(0.55, '#131D38');
     g.addColorStop(1, '#1C1829');
-  } else if (mood === 'science_tech') {
-    g.addColorStop(0, '#0F1E24');
-    g.addColorStop(1, '#1A2D33');
-  } else if (mood === 'comedy_office' || bgStyle === 'Warm Comedy Stage') {
-    g.addColorStop(0, '#2B1B12');
-    g.addColorStop(1, '#3D2518');
+  } else if (mood === 'science_tech' || style === 'visual_explainer') {
+    g.addColorStop(0, '#0E1E24');
+    g.addColorStop(1, '#182C33');
   } else if (mood === 'finance_business') {
     g.addColorStop(0, '#111E17');
     g.addColorStop(1, '#1D2D22');
@@ -160,22 +204,175 @@ function drawThematicAtmosphere(
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, w, h);
 
-  // Subtle ambient motion orbs / particles matched to mood
+  // Visual Explainer blueprint reticle grid
+  if (style === 'visual_explainer') {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(124, 198, 196, 0.08)';
+    ctx.lineWidth = 1;
+    const step = 48;
+    const offset = (t * 8) % step;
+    for (let x = offset; x < w; x += step) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, h);
+      ctx.stroke();
+    }
+    for (let y = offset; y < h; y += step) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(w, y);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // Subtle ambient motion orbs / bokeh particles matched to mood
   ctx.save();
   const isLight = bgStyle === 'Studio Ivory Linen' || bgStyle === 'Architectural Daylight';
   for (let i = 0; i < 10; i++) {
     const px = ((i * 197 + t * (12 + (i % 4) * 5)) % (w + 120)) - 60;
-    const py = ((i * 131 + Math.sin(t * 0.7 + i) * 35) % (h * 0.78));
+    const py = (i * 131 + Math.sin(t * 0.7 + i) * 35) % (h * 0.78);
     const rad = mood === 'cosmic_space' ? 2 + (i % 4) : 18 + (i % 4) * 14 + speechEnergy * 10;
     ctx.beginPath();
     ctx.arc(px, py, rad, 0, Math.PI * 2);
     ctx.fillStyle = isLight
       ? `rgba(182, 154, 101, ${0.06 + (i % 3) * 0.02})`
-      : mood === 'science_tech'
-        ? `rgba(124, 198, 196, ${0.07 + (i % 3) * 0.03})`
-        : `rgba(216, 179, 106, ${0.08 + (i % 3) * 0.03})`;
+      : style === 'comedy_skit'
+        ? `rgba(224, 159, 90, ${0.09 + (i % 3) * 0.03})`
+        : mood === 'science_tech'
+          ? `rgba(124, 198, 196, ${0.07 + (i % 3) * 0.03})`
+          : `rgba(216, 179, 106, ${0.08 + (i % 3) * 0.03})`;
     ctx.fill();
   }
+  ctx.restore();
+}
+
+function drawRelatableOverlayCard(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  stageH: number,
+  beat: SceneVisualBeat | undefined,
+  localProgress: number,
+  style: ResolvedStyle,
+  accentHex: string,
+  t: number
+) {
+  if (!beat) return;
+  const callout = (beat.calloutText || beat.headline || '').trim();
+  if (!callout) return;
+
+  const cardType =
+    beat.visualCardType ||
+    (style === 'comedy_skit'
+      ? 'comic_bubble'
+      : style === 'visual_explainer'
+        ? 'stat_callout'
+        : 'kinetic_quote');
+  const subBadge = (beat.subBadge || beat.headline || 'KEY MOMENT').toUpperCase();
+
+  // Snappy spring-in scale during first 15% of each beat
+  const entry = Math.min(1, localProgress / 0.14);
+  const springScale =
+    entry < 1 ? 0.78 + 0.28 * Math.sin(entry * Math.PI * 0.65) : 1;
+
+  ctx.save();
+  const maxCardW = Math.min(w - 48, Math.round(w * 0.86));
+  const titleFontSize = Math.max(17, Math.round(w * 0.03));
+  ctx.font = `800 ${titleFontSize}px sans-serif`;
+  const textW = ctx.measureText(callout).width;
+  const cardW = Math.min(maxCardW, Math.max(240, Math.round(textW + 52)));
+  const cardH = cardType === 'comparison_split' ? 76 : 68;
+
+  const isTopPlacement = style === 'comedy_skit';
+  const anchorX = Math.round(w / 2);
+  const anchorY = isTopPlacement ? 96 : Math.max(105, stageH - 72);
+
+  ctx.translate(anchorX, anchorY);
+  ctx.scale(springScale, springScale);
+  if (cardType === 'comic_bubble' || (style === 'comedy_skit' && beat.isPunchline)) {
+    const wobble = beat.isPunchline ? Math.sin(t * 9) * 0.015 : -0.014;
+    ctx.rotate(wobble);
+  }
+
+  const x0 = -cardW / 2;
+  const y0 = -cardH / 2;
+
+  if (cardType === 'reaction_chat' || cardType === 'comic_bubble') {
+    // High-contrast relatable chat notification / comic bubble card
+    ctx.fillStyle = cardType === 'comic_bubble' ? '#FBF7EE' : 'rgba(22, 20, 18, 0.92)';
+    drawRoundedRectPath(ctx, x0, y0, cardW, cardH, 12);
+    ctx.fill();
+    ctx.lineWidth = beat.isPunchline ? 3 : 2;
+    ctx.strokeStyle = beat.isPunchline ? '#E09F5A' : accentHex;
+    ctx.stroke();
+
+    // Small comic/chat bubble pointer tail at bottom left
+    ctx.beginPath();
+    ctx.moveTo(x0 + 26, y0 + cardH - 1);
+    ctx.lineTo(x0 + 18, y0 + cardH + 11);
+    ctx.lineTo(x0 + 42, y0 + cardH - 1);
+    ctx.closePath();
+    ctx.fill();
+
+    // Live ping dot + subBadge
+    ctx.fillStyle = beat.isPunchline ? '#C94A38' : '#E09F5A';
+    ctx.beginPath();
+    ctx.arc(x0 + 20, y0 + 18, 4.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.font = '700 10.5px monospace';
+    ctx.fillStyle = cardType === 'comic_bubble' ? '#7A5422' : '#D8B36A';
+    ctx.fillText(subBadge.slice(0, 28), x0 + 32, y0 + 22);
+
+    // Bold punchy callout text
+    ctx.font = `800 ${titleFontSize}px sans-serif`;
+    ctx.fillStyle = cardType === 'comic_bubble' ? '#1A1917' : '#F6F3EC';
+    ctx.fillText(callout.slice(0, 38), x0 + 20, y0 + 49);
+  } else if (cardType === 'stat_callout' || cardType === 'comparison_split') {
+    // Explainer metric / myth-vs-reality overlay card with animated progress bar
+    ctx.fillStyle = 'rgba(15, 25, 32, 0.90)';
+    drawRoundedRectPath(ctx, x0, y0, cardW, cardH, 6);
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = accentHex;
+    ctx.stroke();
+
+    // Left accent bar
+    ctx.fillStyle = accentHex;
+    ctx.fillRect(x0, y0 + 8, 5, cardH - 16);
+
+    ctx.font = '700 10.5px monospace';
+    ctx.fillStyle = '#7CC6C4';
+    ctx.fillText(subBadge.slice(0, 30), x0 + 18, y0 + 21);
+
+    ctx.font = `700 ${titleFontSize}px sans-serif`;
+    ctx.fillStyle = '#F6F3EC';
+    ctx.fillText(callout.slice(0, 38), x0 + 18, y0 + 46);
+
+    // Animated explainer meter bar at bottom of card
+    const meterFill = Math.min(1, localProgress * 2.8);
+    ctx.fillStyle = 'rgba(255,255,255,0.14)';
+    ctx.fillRect(x0 + 18, y0 + cardH - 10, cardW - 36, 4);
+    ctx.fillStyle = accentHex;
+    ctx.fillRect(x0 + 18, y0 + cardH - 10, Math.round((cardW - 36) * meterFill), 4);
+  } else {
+    // Kinetic editorial / story card
+    ctx.fillStyle = 'rgba(20, 18, 16, 0.86)';
+    drawRoundedRectPath(ctx, x0, y0, cardW, cardH, 4);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(216, 179, 106, 0.65)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    ctx.font = '600 10px monospace';
+    ctx.fillStyle = accentHex;
+    ctx.fillText(subBadge.slice(0, 30), x0 + 18, y0 + 21);
+
+    ctx.font = `700 ${titleFontSize}px sans-serif`;
+    ctx.fillStyle = '#F6F3EC';
+    ctx.fillText(callout.slice(0, 38), x0 + 18, y0 + 49);
+  }
+
   ctx.restore();
 }
 
@@ -191,6 +388,7 @@ export async function renderCanvasMotionVideo(params: CanvasAnimationParams): Pr
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('HTML5 2D Canvas context unavailable in this browser.');
 
+  const resolvedStyle = resolveClientProductionStyle(params);
   const isFaceless = params.presenterMode === 'faceless_broll';
   const loadedPresenters = isFaceless
     ? []
@@ -257,8 +455,8 @@ export async function renderCanvasMotionVideo(params: CanvasAnimationParams): Pr
   const ambientGain = audioCtx.createGain();
   osc1.type = 'sine';
   osc2.type = 'triangle';
-  osc1.frequency.value = 196;
-  osc2.frequency.value = 293.66;
+  osc1.frequency.value = resolvedStyle === 'comedy_skit' ? 220 : 196;
+  osc2.frequency.value = resolvedStyle === 'comedy_skit' ? 329.63 : 293.66;
   ambientGain.gain.value = hasActiveSpeechAudio ? 0.003 : 0.032;
   osc1.connect(ambientGain);
   osc2.connect(ambientGain);
@@ -349,7 +547,6 @@ export async function renderCanvasMotionVideo(params: CanvasAnimationParams): Pr
         ? Math.min(1, energySum / (24 * 165))
         : 0.22 + 0.22 * Math.abs(Math.sin(t * 4.2));
 
-      // 6 chronological beats aligned with script progression
       const cutThresholds = [0, 0.17, 0.34, 0.52, 0.68, 0.84, 1.01];
       let sceneIdx = 5;
       for (let s = 0; s < 6; s++) {
@@ -363,27 +560,57 @@ export async function renderCanvasMotionVideo(params: CanvasAnimationParams): Pr
 
       const activeBeat = beats[sceneIdx];
       const activeMood = activeBeat?.themeMood || 'studio_editorial';
-      const accentHex = activeBeat?.accentHex || '#B69A65';
+      const accentHex =
+        resolvedStyle === 'comedy_skit'
+          ? '#E09F5A'
+          : resolvedStyle === 'visual_explainer'
+            ? '#7CC6C4'
+            : activeBeat?.accentHex || '#B69A65';
       const beatImg = loadedBeatImgs[sceneIdx] || anyValidBeatImg;
       const primaryPresenter = loadedPresenters[0] || null;
       const altPresenter = loadedPresenters[1 % Math.max(1, loadedPresenters.length)] || primaryPresenter;
 
-      // 1. Dynamic thematic backdrop layer (always matches script mood & background style)
-      drawThematicAtmosphere(ctx, w, h, t, activeMood, params.backgroundStyle, speechEnergy);
+      // 1. Dynamic thematic backdrop layer tuned to production style & script mood
+      drawThematicAtmosphere(
+        ctx,
+        w,
+        h,
+        t,
+        activeMood,
+        params.backgroundStyle,
+        speechEnergy,
+        resolvedStyle
+      );
 
       const barHeight = params.subtitlesEnabled ? Math.round(h * 0.22) : Math.round(h * 0.12);
       const stageH = h - barHeight;
 
-      const breathe = 0.015 * Math.sin(t * 1.9);
-      const swayX = 8 * Math.sin(t * 1.25);
-      const swayY = 5 * Math.cos(t * 1.6) - speechEnergy * 4;
-      const tilt = 0.01 * Math.sin(t * 1.1) + speechEnergy * 0.006 * Math.sin(t * 6.5);
+      const isComedy = resolvedStyle === 'comedy_skit';
+      const isExplainer = resolvedStyle === 'visual_explainer';
+      const isCinema = resolvedStyle === 'story_cinema';
+      const isPunchlineBeat = Boolean(activeBeat?.isPunchline);
+
+      // Dynamic kinetic camera impulse for Comedy vs calm flow for Cinema
+      const comedyPunchKick =
+        isComedy && localProgress < 0.16
+          ? 0.14 * Math.sin((localProgress / 0.16) * Math.PI)
+          : isComedy && isPunchlineBeat
+            ? 0.08 + speechEnergy * 0.06
+            : 0;
+      const shakeX = isComedy && isPunchlineBeat && localProgress < 0.3 ? Math.sin(t * 36) * 5 : 0;
+      const shakeY = isComedy && isPunchlineBeat && localProgress < 0.3 ? Math.cos(t * 42) * 3 : 0;
+
+      const breathe = (isComedy ? 0.02 : 0.014) * Math.sin(t * (isComedy ? 2.8 : 1.9));
+      const swayX = 8 * Math.sin(t * (isComedy ? 1.9 : 1.25)) + shakeX;
+      const swayY = 5 * Math.cos(t * (isComedy ? 2.3 : 1.6)) - speechEnergy * 4 + shakeY;
+      const tilt =
+        (isComedy ? 0.022 : 0.01) * Math.sin(t * (isComedy ? 2.2 : 1.1)) +
+        speechEnergy * (isComedy ? 0.014 : 0.006) * Math.sin(t * 7.5);
 
       if (isFaceless || !primaryPresenter) {
-        // Faceless Documentary Mode: 100% full-stage script-matched B-roll photography & animated mood visuals
         if (beatImg) {
           const panDir = sceneIdx % 2 === 0 ? 1 : -1;
-          const bgZoom = 1.05 + localProgress * 0.14;
+          const bgZoom = 1.05 + localProgress * (isComedy ? 0.2 : 0.13) + comedyPunchKick;
           drawCoverBox(
             ctx,
             beatImg,
@@ -392,32 +619,163 @@ export async function renderCanvasMotionVideo(params: CanvasAnimationParams): Pr
             w,
             stageH + 10,
             bgZoom,
-            panDir * (-24 + localProgress * 48),
+            panDir * (-24 + localProgress * 48) + shakeX,
             swayY * 0.4,
-            0,
+            isComedy && isPunchlineBeat ? tilt * 0.6 : 0,
             0.94
           );
         }
-        // Subtle thematic gradient veil so topic headline & captions stay crisp
         const veil = ctx.createLinearGradient(0, 0, 0, stageH);
         veil.addColorStop(0, 'rgba(15, 14, 12, 0.52)');
-        veil.addColorStop(0.5, 'rgba(15, 14, 12, 0.12)');
-        veil.addColorStop(1, 'rgba(15, 14, 12, 0.58)');
+        veil.addColorStop(0.5, 'rgba(15, 14, 12, 0.10)');
+        veil.addColorStop(1, 'rgba(15, 14, 12, 0.60)');
         ctx.fillStyle = veil;
         ctx.fillRect(0, 0, w, stageH);
+      } else if (isComedy) {
+        // COMEDY SKIT ENGINE: Fast relatable reaction cuts, punch-zooms, expressive presenter reactions + relatable visual scenes
+        if (sceneIdx % 2 === 1 && beatImg) {
+          // Beat 2, 4, 6: Full-screen relatable comedic B-roll reaction + energetic presenter corner reaction PiP!
+          drawCoverBox(
+            ctx,
+            beatImg,
+            0,
+            0,
+            w,
+            stageH + 10,
+            1.08 + localProgress * 0.16 + comedyPunchKick,
+            shakeX + (-20 + localProgress * 40),
+            shakeY,
+            isPunchlineBeat ? tilt * 0.5 : 0,
+            1
+          );
+          const pipW = Math.round(Math.min(w, h) * 0.31);
+          const pipH = Math.round(pipW * 1.18);
+          const pipX = sceneIdx === 3 ? 22 : w - pipW - 22;
+          const pipY = stageH - pipH - 22;
+          ctx.fillStyle = 'rgba(26, 20, 15, 0.85)';
+          drawRoundedRectPath(ctx, pipX - 5, pipY - 5, pipW + 10, pipH + 10, 12);
+          ctx.fill();
+          drawCoverBox(
+            ctx,
+            altPresenter || primaryPresenter,
+            pipX,
+            pipY,
+            pipW,
+            pipH,
+            baseZoom + 0.08 + comedyPunchKick * 0.5,
+            swayX * 0.5,
+            swayY * 0.5,
+            tilt * 1.2,
+            1,
+            10
+          );
+          ctx.strokeStyle = isPunchlineBeat ? '#E09F5A' : accentHex;
+          ctx.lineWidth = 3.5;
+          drawRoundedRectPath(ctx, pipX, pipY, pipW, pipH, 10);
+          ctx.stroke();
+        } else {
+          // Beat 1, 3, 5: Relatable comedy scene top/backdrop + punchy presenter card
+          if (beatImg) {
+            drawCoverBox(ctx, beatImg, 0, 0, w, stageH + 10, 1.1 + localProgress * 0.1, shakeX, shakeY, 0, 0.58);
+            ctx.fillStyle = 'rgba(26, 18, 12, 0.36)';
+            ctx.fillRect(0, 0, w, stageH);
+          }
+          const cardW = params.aspectRatio === '16:9' ? Math.round(w * 0.44) : Math.round(w * 0.78);
+          const cardH = Math.round(stageH * 0.72);
+          const cardX = Math.round((w - cardW) / 2);
+          const cardY = Math.round((stageH - cardH) / 2) + 28;
+          drawCoverBox(
+            ctx,
+            primaryPresenter,
+            cardX,
+            cardY,
+            cardW,
+            cardH,
+            baseZoom + breathe + comedyPunchKick,
+            swayX * 0.7,
+            swayY * 0.7,
+            tilt * 0.9,
+            1,
+            12
+          );
+          ctx.strokeStyle = isPunchlineBeat || speechEnergy > 0.28 ? '#E09F5A' : accentHex;
+          ctx.lineWidth = 3.5;
+          drawRoundedRectPath(ctx, cardX, cardY, cardW, cardH, 12);
+          ctx.stroke();
+        }
+      } else if (isExplainer) {
+        // VISUAL EXPLAINER ENGINE: Diagram / B-roll priority (75% visual focus) + Presenter coach frame
+        if (sceneIdx === 0) {
+          if (beatImg) {
+            drawCoverBox(ctx, beatImg, 0, 0, w, stageH + 10, 1.06 + localProgress * 0.08, 0, 0, 0, 0.6);
+          }
+          const insetW = params.aspectRatio === '16:9' ? Math.round(w * 0.4) : Math.round(w * 0.74);
+          const insetH = Math.round(stageH * 0.72);
+          const insetX = Math.round((w - insetW) / 2);
+          const insetY = Math.round((stageH - insetH) / 2) - 8;
+          drawCoverBox(
+            ctx,
+            primaryPresenter,
+            insetX,
+            insetY,
+            insetW,
+            insetH,
+            baseZoom + breathe,
+            swayX * 0.5,
+            swayY * 0.5,
+            tilt * 0.6,
+            1,
+            8
+          );
+          ctx.strokeStyle = '#7CC6C4';
+          ctx.lineWidth = 2.5;
+          drawRoundedRectPath(ctx, insetX, insetY, insetW, insetH, 8);
+          ctx.stroke();
+        } else {
+          if (beatImg) {
+            const pan = sceneIdx % 2 === 1 ? -28 + localProgress * 56 : 28 - localProgress * 56;
+            drawCoverBox(ctx, beatImg, 0, 0, w, stageH + 10, 1.06 + localProgress * 0.1, pan, 0, 0, 1);
+          } else {
+            drawCoverBox(ctx, primaryPresenter, 0, 0, w, stageH + 10, baseZoom + breathe, swayX, swayY, tilt, 1);
+          }
+          const pipW = Math.round(Math.min(w, h) * 0.25);
+          const pipH = Math.round(pipW * 1.2);
+          const pipX = sceneIdx % 2 === 1 ? w - pipW - 24 : 24;
+          const pipY = 70;
+          ctx.fillStyle = 'rgba(14, 24, 29, 0.84)';
+          drawRoundedRectPath(ctx, pipX - 4, pipY - 4, pipW + 8, pipH + 8, 8);
+          ctx.fill();
+          drawCoverBox(
+            ctx,
+            altPresenter || primaryPresenter,
+            pipX,
+            pipY,
+            pipW,
+            pipH,
+            baseZoom + 0.04 + breathe,
+            swayX * 0.4,
+            swayY * 0.4,
+            tilt * 0.4,
+            1,
+            6
+          );
+          ctx.strokeStyle = '#7CC6C4';
+          ctx.lineWidth = 2;
+          drawRoundedRectPath(ctx, pipX, pipY, pipW, pipH, 6);
+          ctx.stroke();
+        }
       } else {
-        // Multi-scene Presenter + Script B-Roll Choreography (distinct every beat!)
+        // CREATOR REEL & STORY CINEMA ENGINE: Dynamic alternating Hook -> B-Roll PiP -> Split Screen -> Expressive Reaction
         if (sceneIdx === 0 || sceneIdx === 5) {
-          // Hook & Payoff: Script B-Roll backdrop behind crisp Editorial Presenter Frame
           if (beatImg) {
             drawCoverBox(ctx, beatImg, 0, 0, w, stageH + 10, 1.08 + localProgress * 0.08, 0, 0, 0, 0.48);
-            ctx.fillStyle = 'rgba(18, 17, 15, 0.45)';
+            ctx.fillStyle = 'rgba(18, 17, 15, 0.42)';
             ctx.fillRect(0, 0, w, stageH);
           }
           const insetW = params.aspectRatio === '16:9' ? Math.round(w * 0.42) : Math.round(w * 0.78);
-          const insetH = Math.round(stageH * 0.8);
+          const insetH = Math.round(stageH * 0.76);
           const insetX = Math.round((w - insetW) / 2);
-          const insetY = Math.round((stageH - insetH) / 2) + 14;
+          const insetY = Math.round((stageH - insetH) / 2);
           drawCoverBox(
             ctx,
             primaryPresenter,
@@ -437,18 +795,16 @@ export async function renderCanvasMotionVideo(params: CanvasAnimationParams): Pr
           drawRoundedRectPath(ctx, insetX, insetY, insetW, insetH, 8);
           ctx.stroke();
         } else if (sceneIdx === 1 || sceneIdx === 3) {
-          // Full-bleed Topic B-Roll + Animated Presenter Picture-in-Picture
           if (beatImg) {
             const pan = sceneIdx === 1 ? -32 + localProgress * 64 : 32 - localProgress * 64;
             drawCoverBox(ctx, beatImg, 0, 0, w, stageH + 10, 1.08 + localProgress * 0.1, pan, 0, 0, 1);
           } else {
             drawCoverBox(ctx, primaryPresenter, 0, 0, w, stageH + 10, baseZoom + breathe, swayX, swayY, tilt, 1);
           }
-          // Presenter PiP window (alternate side per scene)
           const pipW = Math.round(Math.min(w, h) * 0.28);
           const pipH = Math.round(pipW * 1.25);
           const pipX = sceneIdx === 1 ? w - pipW - 26 : 26;
-          const pipY = stageH - pipH - 22;
+          const pipY = stageH - pipH - 28;
           ctx.fillStyle = 'rgba(20, 19, 17, 0.75)';
           drawRoundedRectPath(ctx, pipX - 4, pipY - 4, pipW + 8, pipH + 8, 8);
           ctx.fill();
@@ -471,7 +827,6 @@ export async function renderCanvasMotionVideo(params: CanvasAnimationParams): Pr
           drawRoundedRectPath(ctx, pipX, pipY, pipW, pipH, 6);
           ctx.stroke();
         } else if (sceneIdx === 2) {
-          // Editorial Split Screen: Topic B-Roll + Presenter
           if (params.aspectRatio === '16:9') {
             const halfW = Math.round(w / 2);
             if (beatImg) {
@@ -514,7 +869,6 @@ export async function renderCanvasMotionVideo(params: CanvasAnimationParams): Pr
             ctx.fillRect(0, topH - 2, w, 4);
           }
         } else {
-          // Scene 4: Topic B-Roll with expressive presenter crossfade reaction
           if (beatImg) {
             drawCoverBox(
               ctx,
@@ -548,6 +902,20 @@ export async function renderCanvasMotionVideo(params: CanvasAnimationParams): Pr
         }
       }
 
+      // Snappy scene transition flash in Comedy Skit mode on each new beat
+      if (isComedy && sceneIdx > 0 && localProgress < 0.045) {
+        const flashAlpha = (1 - localProgress / 0.045) * 0.38;
+        ctx.fillStyle = `rgba(255, 244, 224, ${flashAlpha.toFixed(3)})`;
+        ctx.fillRect(0, 0, w, stageH);
+      }
+
+      // Cinema letterbox bars for Story Cinema mode
+      if (isCinema) {
+        ctx.fillStyle = '#0F0E0C';
+        ctx.fillRect(0, 0, w, 16);
+        ctx.fillRect(0, stageH - 16, w, 16);
+      }
+
       // Subtle eye-blink micro-cadence + vignette
       const blinkPhase = t % 3.4;
       if (!isFaceless && blinkPhase > 3.24) {
@@ -560,6 +928,9 @@ export async function renderCanvasMotionVideo(params: CanvasAnimationParams): Pr
       grad.addColorStop(1, 'rgba(15,14,12,0.34)');
       ctx.fillStyle = grad;
       ctx.fillRect(0, 0, w, stageH);
+
+      // Relatable Animated Motion-Graphic Card illustrating the current beat
+      drawRelatableOverlayCard(ctx, w, stageH, activeBeat, localProgress, resolvedStyle, accentHex, t);
 
       // Top Watermark & Dynamic Beat Headline Badge matched to active script segment
       if (params.aiDisclosureWatermark) {
