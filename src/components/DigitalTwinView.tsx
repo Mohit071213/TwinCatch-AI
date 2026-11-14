@@ -13,12 +13,22 @@ import type {
   FaceCategory,
   TwinLanguage,
   VoiceAudition,
+  VoicePitchWarmth,
+  VoiceProsodyPreset,
   VoiceProviderId,
   WorkspaceMode,
   WorkspaceState,
 } from '../types';
 import { apiRequest } from '../lib/api';
-import { FREE_HINDI_VOICES, GEMINI_STUDIO_VOICES, defaultVoiceForProvider, samplePreviewText } from '../lib/voices';
+import {
+  FREE_HINDI_VOICES,
+  GEMINI_STUDIO_VOICES,
+  PITCH_WARMTH_OPTIONS,
+  VOICE_PROSODY_PRESETS,
+  defaultVoiceForProvider,
+  getFreeHindiVoiceOption,
+  samplePreviewText,
+} from '../lib/voices';
 
 interface DigitalTwinViewProps {
   workspace: WorkspaceState;
@@ -70,8 +80,10 @@ export const DigitalTwinView: React.FC<DigitalTwinViewProps> = ({
   const chunksRef = useRef<BlobPart[]>([]);
 
   const [busyMsg, setBusyMsg] = useState('');
+  const [savedNotice, setSavedNotice] = useState('');
   const [error, setError] = useState('');
   const [personaPreviewUrl, setPersonaPreviewUrl] = useState('');
+  const [personaPreviewMeta, setPersonaPreviewMeta] = useState('');
   const [personaPreviewBusy, setPersonaPreviewBusy] = useState(false);
 
   const handlePreviewPersonaVoice = async () => {
@@ -91,11 +103,16 @@ export const DigitalTwinView: React.FC<DigitalTwinViewProps> = ({
             voiceIdentity: vid,
             language: personality.primaryLanguage || 'Hindi',
             emotion: 'Warm & Editorial',
+            speakingSpeed: personality.voicePace ?? 0.95,
+            prosodyPreset: personality.voiceProsodyPreset || 'warm_storyteller',
+            pitchWarmth: personality.voicePitchWarmth || 'warm',
+            naturalPauses: personality.naturalPausesEnabled !== false,
           }),
         }
       );
       onUpdateWorkspace(res.workspace);
       setPersonaPreviewUrl(res.audition.audioUrl);
+      setPersonaPreviewMeta(`${res.audition.durationSec}s WAV · ${res.audition.voiceIdentity} · $0.00`);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -231,7 +248,8 @@ export const DigitalTwinView: React.FC<DigitalTwinViewProps> = ({
   const handleSavePersonality = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    setBusyMsg('Saving personality calibration...');
+    setSavedNotice('');
+    setBusyMsg('Saving personality & Hindi voice prosody calibration...');
     try {
       const updated = await apiRequest<WorkspaceState>('/api/twin/personality', mode, {
         method: 'PUT',
@@ -244,6 +262,7 @@ export const DigitalTwinView: React.FC<DigitalTwinViewProps> = ({
         }),
       });
       onUpdateWorkspace(updated);
+      setSavedNotice('Persona voice & prosody saved — automatically synced to Video Studio.');
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -681,11 +700,11 @@ export const DigitalTwinView: React.FC<DigitalTwinViewProps> = ({
             />
           </div>
 
-          <div className="p-4 bg-[#FAF8F4] border border-[#E4DDD0] rounded-sm space-y-3">
+          <div className="p-4 bg-[#FAF8F4] border border-[#E4DDD0] rounded-sm space-y-3.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="text-[11.5px] font-semibold uppercase tracking-[0.08em] text-[#242421] inline-flex items-center gap-1.5">
                 <Volume2 className="w-3.5 h-3.5 text-[#B69A65]" />
-                <span>Default Persona Voice Engine (Free Tier Includes Natural Hindi)</span>
+                <span>Default Persona Voice Engine (Free Conversational Hindi · $0.00)</span>
               </div>
               <span className="text-[11px] font-mono text-[#777D68]">Synced automatically to Video Studio</span>
             </div>
@@ -705,13 +724,13 @@ export const DigitalTwinView: React.FC<DigitalTwinViewProps> = ({
                   }}
                   className="w-full px-2.5 py-2 border border-[#E4DDD0] bg-[#FFFFFF] text-[12.5px] rounded-sm"
                 >
-                  <option value="free_hindi_neural">Free Natural Hindi / Indian Neural ($0.00)</option>
+                  <option value="free_hindi_neural">Free Natural Hindi / Conversational ($0.00)</option>
                   <option value="gemini_flash_tts">Gemini 3.8 Flash TTS</option>
                   <option value="gemini_lite_tts">Gemini 3.8 Flash Lite TTS</option>
                 </select>
               </div>
               <div className="sm:col-span-5">
-                <label className="block text-[11px] text-[#77766F] mb-1">Persona Voice Actor</label>
+                <label className="block text-[11px] text-[#77766F] mb-1">Persona Voice Actor (Male &amp; Female)</label>
                 <select
                   value={
                     personality.preferredVoiceId ||
@@ -720,20 +739,52 @@ export const DigitalTwinView: React.FC<DigitalTwinViewProps> = ({
                       personality.primaryLanguage
                     )
                   }
-                  onChange={(e) => setPersonality({ ...personality, preferredVoiceId: e.target.value })}
+                  onChange={(e) => {
+                    const nextId = e.target.value;
+                    const opt = FREE_HINDI_VOICES.find((v) => v.id === nextId);
+                    const recPreset = opt?.recommendedPreset;
+                    const presetCfg = recPreset
+                      ? VOICE_PROSODY_PRESETS.find((p) => p.id === recPreset)
+                      : undefined;
+                    setPersonality({
+                      ...personality,
+                      preferredVoiceId: nextId,
+                      ...(presetCfg
+                        ? {
+                            voiceProsodyPreset: presetCfg.id,
+                            voicePitchWarmth: presetCfg.pitchWarmth,
+                            voicePace: presetCfg.pace,
+                            naturalPausesEnabled: presetCfg.naturalPauses,
+                          }
+                        : {}),
+                    });
+                  }}
                   className="w-full px-2.5 py-2 border border-[#E4DDD0] bg-[#FFFFFF] text-[12.5px] rounded-sm"
                 >
-                  {(personality.preferredVoiceProvider || 'free_hindi_neural') === 'free_hindi_neural'
-                    ? FREE_HINDI_VOICES.map((v) => (
-                        <option key={v.id} value={v.id}>
-                          {v.label}
-                        </option>
-                      ))
-                    : GEMINI_STUDIO_VOICES.map((v) => (
-                        <option key={v.id} value={v.id}>
-                          {v.label}
-                        </option>
-                      ))}
+                  {(personality.preferredVoiceProvider || 'free_hindi_neural') === 'free_hindi_neural' ? (
+                    <>
+                      <optgroup label="Male — Expressive & Conversational Hindi / Hinglish">
+                        {FREE_HINDI_VOICES.filter((v) => v.gender === 'Male').map((v) => (
+                          <option key={v.id} value={v.id}>
+                            {v.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="Female — Expressive & Warm Hindi / Hinglish">
+                        {FREE_HINDI_VOICES.filter((v) => v.gender === 'Female').map((v) => (
+                          <option key={v.id} value={v.id}>
+                            {v.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    </>
+                  ) : (
+                    GEMINI_STUDIO_VOICES.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.label}
+                      </option>
+                    ))
+                  )}
                 </select>
               </div>
               <div className="sm:col-span-3">
@@ -744,12 +795,144 @@ export const DigitalTwinView: React.FC<DigitalTwinViewProps> = ({
                   className="w-full py-2 px-3 bg-[#FFFFFF] border border-[#242421] text-[#242421] text-[12px] font-semibold rounded-sm hover:bg-[#EFE8D8] inline-flex items-center justify-center gap-1.5"
                 >
                   <Volume2 className="w-3.5 h-3.5 text-[#B69A65]" />
-                  <span>{personaPreviewBusy ? 'Testing...' : 'Preview Voice'}</span>
+                  <span>{personaPreviewBusy ? 'Synthesizing...' : 'Preview Voice'}</span>
                 </button>
               </div>
             </div>
-            {personaPreviewUrl && <audio controls src={personaPreviewUrl} className="w-full h-8" />}
+
+            {(personality.preferredVoiceProvider || 'free_hindi_neural') === 'free_hindi_neural' && (() => {
+              const selectedMeta = getFreeHindiVoiceOption(personality.preferredVoiceId);
+              const activePreset = personality.voiceProsodyPreset || 'warm_storyteller';
+              const activeWarmth = personality.voicePitchWarmth || 'warm';
+              const activePace = personality.voicePace ?? 0.95;
+              const pausesOn = personality.naturalPausesEnabled !== false;
+              const presetInfo = VOICE_PROSODY_PRESETS.find((p) => p.id === activePreset);
+              return (
+                <div className="space-y-3 border-t border-[#E4DDD0] pt-3">
+                  <div className="text-[12px] text-[#77766F]">
+                    <span className="font-semibold text-[#242421]">{selectedMeta.shortName}</span>
+                    {' · '}
+                    <span>{selectedMeta.gender}</span>
+                    {' · '}
+                    <span>{selectedMeta.style}</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+                    <div className="sm:col-span-4">
+                      <label className="block text-[11px] text-[#77766F] mb-1">
+                        Conversational Delivery Preset
+                      </label>
+                      <select
+                        value={activePreset}
+                        onChange={(e) => {
+                          const nextPresetId = e.target.value as VoiceProsodyPreset;
+                          const cfg = VOICE_PROSODY_PRESETS.find((p) => p.id === nextPresetId);
+                          setPersonality({
+                            ...personality,
+                            voiceProsodyPreset: nextPresetId,
+                            voicePitchWarmth: cfg?.pitchWarmth || activeWarmth,
+                            voicePace: cfg?.pace ?? activePace,
+                            naturalPausesEnabled: cfg?.naturalPauses ?? pausesOn,
+                          });
+                        }}
+                        className="w-full px-2.5 py-1.5 border border-[#E4DDD0] bg-[#FFFFFF] text-[12.5px] rounded-sm"
+                      >
+                        {VOICE_PROSODY_PRESETS.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="sm:col-span-4">
+                      <label className="block text-[11px] text-[#77766F] mb-1">
+                        Pitch Warmth
+                      </label>
+                      <select
+                        value={activeWarmth}
+                        onChange={(e) =>
+                          setPersonality({
+                            ...personality,
+                            voicePitchWarmth: e.target.value as VoicePitchWarmth,
+                          })
+                        }
+                        className="w-full px-2.5 py-1.5 border border-[#E4DDD0] bg-[#FFFFFF] text-[12.5px] rounded-sm"
+                      >
+                        {PITCH_WARMTH_OPTIONS.map((opt) => (
+                          <option key={opt.id} value={opt.id}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="sm:col-span-4">
+                      <div className="flex items-center justify-between text-[11px] text-[#77766F] mb-1">
+                        <span>Speaking Pace</span>
+                        <span className="font-mono tabular-nums font-semibold text-[#242421]">
+                          {activePace.toFixed(2)}x
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0.85}
+                        max={1.15}
+                        step={0.01}
+                        value={activePace}
+                        onChange={(e) =>
+                          setPersonality({
+                            ...personality,
+                            voicePace: Number(e.target.value),
+                          })
+                        }
+                        className="w-full accent-[#242421]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-0.5">
+                    <label className="inline-flex items-center gap-2 text-[12px] text-[#242421] cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={pausesOn}
+                        onChange={(e) =>
+                          setPersonality({
+                            ...personality,
+                            naturalPausesEnabled: e.target.checked,
+                          })
+                        }
+                        className="accent-[#242421]"
+                      />
+                      <span>
+                        Natural breath &amp; thinking pauses (Hindi danda ।, commas &amp; conversational dashes)
+                      </span>
+                    </label>
+                    {presetInfo && (
+                      <span className="text-[11px] font-mono text-[#77766F]">{presetInfo.description}</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {personaPreviewUrl && (
+              <div className="space-y-1.5 border-t border-[#E4DDD0] pt-2.5">
+                {personaPreviewMeta && (
+                  <div className="text-[11px] font-mono tabular-nums text-[#777D68]">
+                    {personaPreviewMeta}
+                  </div>
+                )}
+                <audio controls src={personaPreviewUrl} className="w-full h-8" />
+              </div>
+            )}
           </div>
+
+          {savedNotice && (
+            <div className="p-3 bg-[#E9ECE4] border border-[#777D68]/40 text-[#242421] text-[12.5px] rounded-sm">
+              {savedNotice}
+            </div>
+          )}
 
           <div className="pt-2 flex justify-end">
             <button

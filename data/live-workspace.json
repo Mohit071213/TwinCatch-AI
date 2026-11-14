@@ -1,0 +1,455 @@
+{
+  "mode": "live",
+  "twin": {
+    "faceAssets": [],
+    "voiceSamples": [],
+    "personality": {
+      "creatorName": "",
+      "handle": "",
+      "niche": "Technology, Creator Systems & Practical AI",
+      "speakingStyle": "Direct, thoughtful, grounded in practical real-world examples.",
+      "vocabularyNotes": "Clear modern editorial language without hype buzzwords.",
+      "humourStyle": "Dry understated wit",
+      "formalityLevel": "Conversational Editorial",
+      "accentAndPronunciation": "Natural Indian-English & crisp Hinglish cadence",
+      "catchphrases": [],
+      "primaryLanguage": "Hindi",
+      "preferredVoiceProvider": "free_hindi_neural",
+      "preferredVoiceId": "hi-IN-MadhurNeural"
+    },
+    "consent": {
+      "attested": false,
+      "ownerFullName": "",
+      "attestedAt": null,
+      "likenessUsageScope": "Personal content creation owned by the verified creator only.",
+      "requireAiDisclosure": true
+    },
+    "readiness": {
+      "overallScore": 16,
+      "faceScore": 0,
+      "voiceScore": 0,
+      "personalityScore": 80,
+      "consentVerified": false,
+      "missingItems": [
+        "Front-facing portrait",
+        "Left profile portrait",
+        "Right profile portrait",
+        "Talking expression frame",
+        "Clean voice sample (.wav/.mp3)",
+        "Signed biometric ownership consent"
+      ],
+      "externalModelStatus": "not_trained"
+    }
+  },
+  "trends": [],
+  "onlineIdeas": [],
+  "scripts": [],
+  "auditions": [],
+  "videos": [],
+  "benchmarks": [
+    {
+      "id": "bm_free_hindi_neural",
+      "providerId": "free_hindi_neural",
+      "providerName": "Free Natural Hindi / Indian Neural Voice ($0.00)",
+      "category": "voice",
+      "tier": "local_free",
+      "referenceImageLabel": "N/A (Audio Only)",
+      "voiceSampleLabel": "Hindi / Hinglish Persona Reference",
+      "scriptExcerpt": "नमस्ते, मैं आपका डिजिटल ट्विन हूँ। आज हम तीस सेकंड की एक साफ रील तैयार करेंगे।",
+      "verified": false,
+      "processingMs": null,
+      "resolutionOrSampleRate": "24kHz Mono WAV",
+      "estimatedCostPerMinUsd": 0,
+      "metrics": {
+        "faceSimilarity": null,
+        "voiceSimilarity": null,
+        "lipSync": null,
+        "naturalExpressions": null,
+        "renderingQuality": null
+      },
+      "notes": "Zero-cost Hindi & Hinglish neural voice engine (hi-IN-MadhurNeural / hi-IN-SwaraNeural). Run benchmark to audition real synthesis latency.",
+      "benchmarkedAt": null
+    },
+    {
+      "id": "bm_ffmpeg_local",
+      "providerId": "ffmpeg_local",
+      "providerName": "Local FFmpeg Portrait Assembly",
+      "category": "video",
+      "tier": "local_free",
+      "referenceImageLabel": "Creator Front Studio Portrait",
+      "voiceSampleLabel": "Studio Speech Sample",
+      "scriptExcerpt": "Short-form 9:16 editorial hook with burned-in captions.",
+      "verified": false,
+      "processingMs": null,
+      "resolutionOrSampleRate": "720x1280 H.264",
+      "estimatedCostPerMinUsd": 0,
+      "metrics": {
+        "faceSimilarity": null,
+        "voiceSimilarity": null,
+        "lipSync": null,
+        "naturalExpressions": null,
+        "renderingQuality": null
+      },
+      "notes": "Run benchmark to measure actual local FFmpeg processing latency and inspect playable MP4 output.",
+      "benchmarkedAt": null
+    },
+    {
+      "id": "bm_gemini_lite_tts",
+      "providerId": "gemini_lite_tts",
+      "providerName": "Gemini 3.8 Flash Lite TTS",
+      "category": "voice",
+      "tier": "balanced",
+      "referenceImageLabel": "N/A (Audio Only)",
+      "voiceSampleLabel": "Creator Reference Voice",
+      "scriptExcerpt": "Three-second creator hook audition.",
+      "verified": false,
+      "processingMs": null,
+      "resolutionOrSampleRate": "24kHz Mono WAV",
+      "estimatedCostPerMinUsd": 0.015,
+      "metrics": {
+        "faceSimilarity": null,
+        "voiceSimilarity": null,
+        "lipSync": null,
+        "naturalExpressions": null,
+        "renderingQuality": null
+      },
+      "notes": "Standard studio voice (not personal voice clone). Run benchmark to audition real latency and output.",
+      "benchmarkedAt": null
+    },
+    {
+      "id": "bm_gemini_flash_tts",
+      "providerId": "gemini_flash_tts",
+      "providerName": "Gemini 3.8 Flash TTS (Expressive)",
+      "category": "voice",
+      "tier": "balanced",
+      "referenceImageLabel": "N/A (Audio Only)",
+      "voiceSampleLabel": "Creator Reference Voice",
+      "scriptExcerpt": "Conversational bilingual Hinglish/English hook.",
+      "verified": false,
+      "processingMs": null,
+      "resolutionOrSampleRate": "24kHz Mono WAV",
+      "estimatedCostPerMinUsd": 0.03,
+      "metrics": {
+        "faceSimilarity": null,
+        "voiceSimilarity": null,
+        "lipSync": null,
+        "naturalExpressions": null,
+        "renderingQuality": null
+      },
+      "notes": "Higher prosody fidelity than Lite TTS. Run benchmark to preview side-by-side.",
+      "benchmarkedAt": null
+    },
+    {
+      "id": "bm_elevenlabs_clone",
+      "providerId": "elevenlabs_webhook",
+      "providerName": "ElevenLabs Personal Voice Clone",
+      "category": "voice",
+      "tier": "premium",
+      "referenceImageLabel": "N/A (Audio Only)",
+      "voiceSampleLabel": "Authorized Personal Clone",
+      "scriptExcerpt": "Multilingual conversational clone test.",
+      "verified": false,
+      "processingMs": null,
+      "resolutionOrSampleRate": "44.1kHz MP3/WAV",
+      "estimatedCostPerMinUsd": 0.18,
+      "metrics": {
+        "faceSimilarity": null,
+        "voiceSimilarity": null,
+        "lipSync": null,
+        "naturalExpressions": null,
+        "renderingQuality": null
+      },
+      "notes": "External connector unconfigured. Configure endpoint in Integrations to run verified benchmark.",
+      "benchmarkedAt": null
+    },
+    {
+      "id": "bm_gemini_omni_veo",
+      "providerId": "gemini_omni_veo",
+      "providerName": "Gemini Omni / Veo + FFmpeg Master",
+      "category": "video",
+      "tier": "premium",
+      "referenceImageLabel": "Creator Front Studio Portrait",
+      "voiceSampleLabel": "Expressive TTS Track",
+      "scriptExcerpt": "Photorealistic animated presenter clip.",
+      "verified": false,
+      "processingMs": null,
+      "resolutionOrSampleRate": "720p MP4 + AAC",
+      "estimatedCostPerMinUsd": 0.45,
+      "metrics": {
+        "faceSimilarity": null,
+        "voiceSimilarity": null,
+        "lipSync": null,
+        "naturalExpressions": null,
+        "renderingQuality": null
+      },
+      "notes": "Paid tier model. Requires explicit cost approval to run side-by-side benchmark.",
+      "benchmarkedAt": null
+    }
+  ],
+  "automationJobs": [],
+  "publishingDrafts": [],
+  "analytics": [],
+  "integrations": [
+    {
+      "id": "free_hindi_neural",
+      "name": "Free Natural Hindi & Indian Neural Voice",
+      "category": "Voice Engine",
+      "tier": "local_free",
+      "description": "Zero-cost neural speech engine for fluent Devanagari Hindi, conversational Hinglish, and Indian English voices (Madhur, Swara, Prabhat, Neerja).",
+      "configured": true,
+      "endpointUrl": "free://neural-hindi-tts",
+      "status": "connected",
+      "capabilities": [
+        "$0.00 Free Tier",
+        "Natural Hindi & Hinglish",
+        "4 Indian Neural Voices",
+        "24kHz WAV Master"
+      ],
+      "supportsVoiceCloning": false,
+      "lastCheckedAt": "2026-11-14T08:28:30.601Z",
+      "notes": "Active in $0.00 Free Tier for Persona Creation & Studio MP4 renders. Distinct from paid personal voice cloning."
+    },
+    {
+      "id": "gemini_intelligence",
+      "name": "Gemini 4 Hydrogen & Speech",
+      "category": "LLM Intelligence",
+      "tier": "balanced",
+      "description": "Server-side script generation (EN/HI/Hinglish), speech transcription, and expressive TTS voice auditions.",
+      "configured": true,
+      "endpointUrl": "server://gemini-api",
+      "status": "connected",
+      "capabilities": [
+        "Multilingual Scripts",
+        "Voice Verification STT",
+        "WAV Voice Audition"
+      ],
+      "supportsVoiceCloning": false,
+      "lastCheckedAt": "2026-11-14T08:28:30.602Z",
+      "notes": "Active on server. Standard voice personas only — never mislabelled as personal voice cloning."
+    },
+    {
+      "id": "free_canvas_animator",
+      "name": "Free Live Motion & Expression Animator",
+      "category": "Avatar & Lip-Sync",
+      "tier": "local_free",
+      "description": "Zero-cost 30fps multi-expression animator driving head sway, eye-blinks, speech-energy mouth crossfades, camera cuts, and kinetic captions.",
+      "configured": true,
+      "endpointUrl": "browser://canvas-motion-director",
+      "status": "connected",
+      "capabilities": [
+        "$0.00 / Render",
+        "Speech-Energy Motion",
+        "Multi-Angle Cuts",
+        "Kinetic Captions"
+      ],
+      "supportsVoiceCloning": false,
+      "lastCheckedAt": "2026-11-14T08:28:30.602Z",
+      "notes": "Runs 100% free in Studio and masters to H.264 MP4 via local FFmpeg."
+    },
+    {
+      "id": "ffmpeg_local",
+      "name": "Free Multi-Scene FFmpeg Motion Director",
+      "category": "Avatar & Lip-Sync",
+      "tier": "local_free",
+      "description": "Deterministic server-side 4-scene MP4 director with xfade transitions, camera pans, live audio waveform, beat badges, and timed captions.",
+      "configured": true,
+      "endpointUrl": "local:///usr/bin/ffmpeg",
+      "status": "connected",
+      "capabilities": [
+        "Multi-Shot xfade Cuts",
+        "Audio Waveform",
+        "9:16 / 1:1 / 16:9 Render",
+        "Timed Subtitles"
+      ],
+      "supportsVoiceCloning": false,
+      "lastCheckedAt": "2026-11-14T08:28:30.602Z",
+      "notes": "Local FFmpeg binary verified on server."
+    },
+    {
+      "id": "free_hf_space",
+      "name": "Free Hugging Face ZeroGPU Lip-Sync Space",
+      "category": "Avatar & Lip-Sync",
+      "tier": "local_free",
+      "description": "Optional $0.00 community Gradio Space bridge (e.g. LivePortrait / SadTalker ZeroGPU Space) for neural facial animation.",
+      "configured": false,
+      "endpointUrl": "",
+      "status": "unconfigured",
+      "capabilities": [
+        "$0.00 ZeroGPU",
+        "Neural Lip Sync",
+        "Gradio API Bridge"
+      ],
+      "supportsVoiceCloning": false,
+      "lastCheckedAt": null,
+      "notes": "Paste any public Hugging Face Gradio Space endpoint URL to run free cloud lip-sync when available."
+    },
+    {
+      "id": "gemini_omni_veo",
+      "name": "Gemini Omni / Veo Video Generator",
+      "category": "Avatar & Lip-Sync",
+      "tier": "premium",
+      "description": "Photorealistic image-to-video motion generation via Gemini Interactions API. Always gated by explicit cost approval.",
+      "configured": true,
+      "endpointUrl": "server://gemini-omni-1.2-flash",
+      "status": "connected",
+      "capabilities": [
+        "720p Portrait Animation",
+        "Reference Image Conditioning",
+        "FFmpeg Post-Mastering"
+      ],
+      "supportsVoiceCloning": false,
+      "lastCheckedAt": "2026-11-14T08:28:30.602Z",
+      "notes": "Requires paid-tier API key and per-job cost authorization in Video Studio."
+    },
+    {
+      "id": "kokoro_local",
+      "name": "Local Kokoro / Piper TTS Worker",
+      "category": "Voice Engine",
+      "tier": "local_free",
+      "description": "Zero-cost local neural TTS HTTP adapter for draft synthesis and offline experimentation.",
+      "configured": false,
+      "endpointUrl": "",
+      "status": "unconfigured",
+      "capabilities": [
+        "Zero API Cost",
+        "Fast Draft Speech"
+      ],
+      "supportsVoiceCloning": false,
+      "lastCheckedAt": null,
+      "notes": "Optional zero-cost fallback. Configure your local Kokoro or Piper HTTP endpoint URL to enable."
+    },
+    {
+      "id": "elevenlabs_webhook",
+      "name": "ElevenLabs Personal Voice Clone",
+      "category": "Voice Engine",
+      "tier": "premium",
+      "description": "Authorized personal voice cloning connector for Hindi, Hinglish, and English emotional inflection.",
+      "configured": false,
+      "endpointUrl": "",
+      "status": "unconfigured",
+      "capabilities": [
+        "Cloned Voice Identity",
+        "Multilingual Pronunciation",
+        "Emotion Controls"
+      ],
+      "supportsVoiceCloning": true,
+      "lastCheckedAt": null,
+      "notes": "Never substituted silently. Must be explicitly configured and authorized."
+    },
+    {
+      "id": "liveportrait_heygen",
+      "name": "LivePortrait / HeyGen Lip-Sync Worker",
+      "category": "Avatar & Lip-Sync",
+      "tier": "premium",
+      "description": "Dedicated facial expression driving and audio-driven lip-synchronization worker webhook.",
+      "configured": false,
+      "endpointUrl": "",
+      "status": "unconfigured",
+      "capabilities": [
+        "Neural Lip Sync",
+        "Natural Eye Blinking",
+        "Head Motion Driving"
+      ],
+      "supportsVoiceCloning": false,
+      "lastCheckedAt": null,
+      "notes": "Connect a remote LivePortrait GPU endpoint or HeyGen webhook URL."
+    },
+    {
+      "id": "n8n_webhook",
+      "name": "n8n Workflow Orchestrator",
+      "category": "Automation",
+      "tier": "balanced",
+      "description": "HMAC-SHA256 signed webhook dispatch and callback receiver for automated multi-step publishing.",
+      "configured": false,
+      "endpointUrl": "",
+      "status": "unconfigured",
+      "capabilities": [
+        "Idempotent Job Dispatch",
+        "Retry Backoff",
+        "Execution Audit Logs"
+      ],
+      "supportsVoiceCloning": false,
+      "lastCheckedAt": null,
+      "notes": "Configure any webhook URL (e.g., your n8n production trigger) to dispatch live workflow events."
+    },
+    {
+      "id": "social_graph_connector",
+      "name": "Instagram / TikTok / Facebook Publisher",
+      "category": "Social Publishing",
+      "tier": "balanced",
+      "description": "External publishing webhook bridge. Items remain Draft/Scheduled until a delivery receipt is confirmed.",
+      "configured": false,
+      "endpointUrl": "",
+      "status": "unconfigured",
+      "capabilities": [
+        "Reels / TikTok Prep",
+        "Cover Frame Export",
+        "Confirmed Receipt Tracking"
+      ],
+      "supportsVoiceCloning": false,
+      "lastCheckedAt": null,
+      "notes": "Connect an authorized social publishing webhook to execute live post deliveries."
+    }
+  ],
+  "auditLogs": [
+    {
+      "id": "audit_init",
+      "timestamp": "2026-11-14T08:28:30.602Z",
+      "actor": "System",
+      "category": "security",
+      "action": "Live Workspace Initialized",
+      "detail": "Clean single-creator workspace created with strict zero-fabrication defaults."
+    }
+  ],
+  "settings": {
+    "monthlyBudgetCapUsd": 25,
+    "currentMonthSpendUsd": 0,
+    "requireExplicitPaidApproval": true,
+    "defaultQualityTier": "balanced",
+    "aiDisclosureDefault": true,
+    "watermarkText": "AI DIGITAL TWIN · AUTHORIZED LIKENESS",
+    "sessionLockEnabled": false,
+    "creatorEmail": "Samymehra071213@gmail.com",
+    "rssFeeds": [
+      {
+        "id": "rss_techcrunch_ai",
+        "name": "TechCrunch AI",
+        "url": "https://techcrunch.com/category/artificial-intelligence/feed/",
+        "defaultCategory": "Technology",
+        "enabled": true
+      },
+      {
+        "id": "rss_sciencedaily_top",
+        "name": "ScienceDaily Top Science",
+        "url": "https://www.sciencedaily.com/rss/top/science.xml",
+        "defaultCategory": "Science",
+        "enabled": true
+      },
+      {
+        "id": "rss_smithsonian_smart",
+        "name": "Smithsonian Smart News",
+        "url": "https://www.smithsonianmag.com/rss/smart-news/",
+        "defaultCategory": "Knowledge",
+        "enabled": true
+      },
+      {
+        "id": "rss_verge",
+        "name": "The Verge",
+        "url": "https://www.theverge.com/rss/index.xml",
+        "defaultCategory": "Rising",
+        "enabled": true
+      },
+      {
+        "id": "rss_hn_front",
+        "name": "Hacker News Frontpage",
+        "url": "https://hnrss.org/frontpage?count=12",
+        "defaultCategory": "Business",
+        "enabled": true
+      }
+    ]
+  },
+  "capabilities": {
+    "geminiConfigured": true,
+    "ffmpegAvailable": true
+  }
+}

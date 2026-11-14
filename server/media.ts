@@ -1,12 +1,24 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
+import type { VoicePitchWarmth, VoiceProsodyPreset } from '../src/types.ts';
 
 const execFileAsync = promisify(execFile);
 
 export const MIN_VIDEO_DURATION_SEC = 30;
+
+export const ALLOWED_FREE_HINDI_VOICES = [
+  'en-US-AndrewMultilingualNeural',
+  'en-US-BrianMultilingualNeural',
+  'hi-IN-MadhurNeural',
+  'en-IN-PrabhatNeural',
+  'en-US-AvaMultilingualNeural',
+  'en-US-EmmaMultilingualNeural',
+  'hi-IN-SwaraNeural',
+  'en-IN-NeerjaNeural',
+] as const;
 
 let cachedHasDrawtext: boolean | null = null;
 let cachedFfmpegOk: boolean | null = null;
@@ -77,55 +89,263 @@ export async function synthesizeAmbientStudioWav(params: {
   );
 }
 
+function escapeSsmlText(input: string): string {
+  return input
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function runFfmpegPipe(args: string[], stdinBuffer: Buffer, timeoutMs = 20000): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('ffmpeg', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const outChunks: Buffer[] = [];
+    let errText = '';
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`FFmpeg pipe timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    child.stdout.on('data', (chunk) => outChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    child.stderr.on('data', (chunk) => {
+      errText += chunk.toString();
+    });
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) {
+        resolve(Buffer.concat(outChunks));
+      } else {
+        reject(new Error(`FFmpeg pipe exited with code ${code}: ${errText.slice(-300)}`));
+      }
+    });
+
+    child.stdin.on('error', () => {
+      // Ignore broken pipe if child exits early
+    });
+    child.stdin.end(stdinBuffer);
+  });
+}
+
+function msToSilencePcm24k(ms: number): Buffer {
+  const clampedMs = Math.max(0, Math.min(1200, Math.round(ms)));
+  // 24,000 samples/sec * 2 bytes/sample (pcm_s16le mono) = 48 bytes per ms
+  const byteCount = clampedMs * 48;
+  return Buffer.alloc(byteCount - (byteCount % 2), 0);
+}
+
+interface SpeechPhrase {
+  text: string;
+  pauseAfterMs: number;
+}
+
+function segmentConversationalPhrases(
+  rawText: string,
+  preset: VoiceProsodyPreset,
+  naturalPauses: boolean
+): SpeechPhrase[] {
+  const cleaned = rawText
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .trim();
+
+  if (!cleaned) return [];
+  if (!naturalPauses) {
+    return [{ text: cleaned.replace(/\n+/g, ' '), pauseAfterMs: 80 }];
+  }
+
+  const pauseProfile =
+    preset === 'calm_mentor'
+      ? { sentence: 360, clause: 175 }
+      : preset === 'lively_creator'
+        ? { sentence: 215, clause: 110 }
+        : preset === 'friendly_explainer'
+          ? { sentence: 270, clause: 135 }
+          : { sentence: 320, clause: 155 }; // warm_storyteller
+
+  const paragraphs = cleaned
+    .split(/\n+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  const phrases: SpeechPhrase[] = [];
+
+  for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
+    const para = paragraphs[pIdx];
+    // Split on sentence endings (Hindi danda ।, ?, !, ..., and non-decimal .) plus conversational dashes/clauses
+    const rawTokens = para
+      .split(/(?<=[।?!]|(?<!\d)\.(?!\d)|\.{3}|[—–;])\s+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    // Further subdivide long clauses at commas if > 95 chars so inflection stays conversational
+    const fineSegments: Array<{ text: string; kind: 'sentence' | 'clause' }> = [];
+    for (const token of rawTokens) {
+      if (token.length > 95 && token.includes(',')) {
+        const subParts = token.split(/(?<=,)\s+/).map((x) => x.trim()).filter(Boolean);
+        subParts.forEach((sub, sIdx) => {
+          const isLastSub = sIdx === subParts.length - 1;
+          fineSegments.push({
+            text: sub,
+            kind: !isLastSub || /[—–;,]$/.test(sub) ? 'clause' : 'sentence',
+          });
+        });
+      } else {
+        const isClause = /[—–;,]$/.test(token);
+        fineSegments.push({ text: token, kind: isClause ? 'clause' : 'sentence' });
+      }
+    }
+
+    // Merge tiny <16 char fragments into adjacent phrases to preserve fluid intonation
+    const merged: Array<{ text: string; kind: 'sentence' | 'clause' }> = [];
+    for (const seg of fineSegments) {
+      if (merged.length > 0 && seg.text.length < 16) {
+        merged[merged.length - 1].text = `${merged[merged.length - 1].text} ${seg.text}`;
+        merged[merged.length - 1].kind = seg.kind;
+      } else if (merged.length > 0 && merged[merged.length - 1].text.length < 18) {
+        merged[merged.length - 1].text = `${merged[merged.length - 1].text} ${seg.text}`;
+        merged[merged.length - 1].kind = seg.kind;
+      } else {
+        merged.push({ ...seg });
+      }
+    }
+
+    merged.forEach((m, idx) => {
+      const isLastInPara = idx === merged.length - 1;
+      const isVeryLast = pIdx === paragraphs.length - 1 && isLastInPara;
+      const pauseAfterMs = isVeryLast
+        ? 90
+        : isLastInPara && paragraphs.length > 1
+          ? pauseProfile.sentence + 85
+          : m.kind === 'clause'
+            ? pauseProfile.clause
+            : pauseProfile.sentence;
+      phrases.push({ text: m.text, pauseAfterMs });
+    });
+  }
+
+  return phrases.length > 0 ? phrases : [{ text: cleaned, pauseAfterMs: 90 }];
+}
+
 export async function synthesizeEdgeNeuralSpeechWav(params: {
   text: string;
   voiceIdentity: string;
   language: 'English' | 'Hindi' | 'Hinglish';
   speakingSpeed?: number;
+  prosodyPreset?: VoiceProsodyPreset;
+  pitchWarmth?: VoicePitchWarmth;
+  naturalPauses?: boolean;
   outputWavPath: string;
 }): Promise<{ wavPath: string; voiceUsed: string; byteLength: number }> {
   await fs.mkdir(path.dirname(params.outputWavPath), { recursive: true });
 
-  const allowedEdgeVoices = [
-    'hi-IN-MadhurNeural',
-    'hi-IN-SwaraNeural',
-    'en-IN-PrabhatNeural',
-    'en-IN-NeerjaNeural',
-  ];
-
-  const voiceUsed = allowedEdgeVoices.includes(params.voiceIdentity)
+  const voiceUsed = (ALLOWED_FREE_HINDI_VOICES as readonly string[]).includes(params.voiceIdentity)
     ? params.voiceIdentity
-    : params.language === 'Hindi'
-      ? 'hi-IN-MadhurNeural'
-      : params.language === 'Hinglish'
-        ? 'hi-IN-SwaraNeural'
-        : 'en-IN-PrabhatNeural';
+    : params.language === 'English'
+      ? 'en-US-AvaMultilingualNeural'
+      : 'en-US-AndrewMultilingualNeural';
 
-  const tts = new MsEdgeTTS();
-  await tts.setMetadata(voiceUsed, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+  const preset: VoiceProsodyPreset = params.prosodyPreset || 'warm_storyteller';
+  const presetDefaults =
+    preset === 'calm_mentor'
+      ? { pace: 0.92, warmth: 'warm' as VoicePitchWarmth }
+      : preset === 'lively_creator'
+        ? { pace: 1.04, warmth: 'bright' as VoicePitchWarmth }
+        : preset === 'friendly_explainer'
+          ? { pace: 0.98, warmth: 'natural' as VoicePitchWarmth }
+          : { pace: 0.95, warmth: 'warm' as VoicePitchWarmth };
 
-  const { audioStream } = tts.toStream(params.text.slice(0, 1800));
-  const chunks: Buffer[] = [];
-  for await (const chunk of audioStream) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  const mp3Buffer = Buffer.concat(chunks);
-  if (mp3Buffer.length < 256) {
-    throw new Error('Free Neural Hindi TTS returned an empty audio stream.');
-  }
+  const effectivePace = Math.max(
+    0.85,
+    Math.min(1.15, Number(params.speakingSpeed) || presetDefaults.pace)
+  );
+  const warmth: VoicePitchWarmth = params.pitchWarmth || presetDefaults.warmth;
+  const naturalPauses = params.naturalPauses !== false;
 
-  const tmpMp3 = `${params.outputWavPath}.tmp.mp3`;
-  await fs.writeFile(tmpMp3, mp3Buffer);
+  const ratePct = Math.round((effectivePace - 1.0) * 100);
+  const rateStr = `${ratePct >= 0 ? '+' : ''}${ratePct}%`;
+  const pitchStr = warmth === 'warm' ? '-4Hz' : warmth === 'bright' ? '+4Hz' : '+0Hz';
+
+  const phrases = segmentConversationalPhrases(params.text.slice(0, 2200), preset, naturalPauses);
+  const tts = new MsEdgeTTS({ connectionTimeoutMs: 12000, synthesisTimeoutMs: 25000 });
+
+  const pcmParts: Buffer[] = [msToSilencePcm24k(60)]; // smooth 60ms head lead-in
   try {
-    const speed = Math.max(0.8, Math.min(1.25, Number(params.speakingSpeed) || 1.0));
-    const args = ['-y', '-i', tmpMp3];
-    if (Math.abs(speed - 1.0) >= 0.05) {
-      args.push('-af', `atempo=${speed.toFixed(2)}`);
+    await tts.setMetadata(voiceUsed, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+
+    for (const phrase of phrases) {
+      const { audioStream } = tts.toStream(escapeSsmlText(phrase.text), {
+        rate: rateStr,
+        pitch: pitchStr,
+      });
+      const chunks: Buffer[] = [];
+      for await (const chunk of audioStream) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const mp3Buf = Buffer.concat(chunks);
+      if (mp3Buf.length < 128) {
+        throw new Error(`Free Neural Hindi TTS returned an empty segment for ${voiceUsed}.`);
+      }
+
+      const pcmChunk = await runFfmpegPipe(
+        ['-v', 'error', '-f', 'mp3', '-i', 'pipe:0', '-ar', '24000', '-ac', '1', '-f', 's16le', 'pipe:1'],
+        mp3Buf,
+        15000
+      );
+      if (pcmChunk.length > 0) {
+        pcmParts.push(pcmChunk);
+        if (phrase.pauseAfterMs > 0) {
+          pcmParts.push(msToSilencePcm24k(phrase.pauseAfterMs));
+        }
+      }
     }
-    args.push('-ar', '24000', '-ac', '1', '-c:a', 'pcm_s16le', params.outputWavPath);
-    await execFileAsync('ffmpeg', args, { timeout: 20000 });
   } finally {
-    await fs.unlink(tmpMp3).catch(() => {});
+    try {
+      tts.close();
+    } catch {
+      // ignore close errors
+    }
+  }
+
+  const combinedPcm = Buffer.concat(pcmParts);
+  if (combinedPcm.length < 512) {
+    throw new Error('Free Neural Hindi TTS returned insufficient audio.');
+  }
+
+  // Master concatenated speech PCM with subtle broadcast vocal warmth & balanced loudness
+  const tmpPcm = `${params.outputWavPath}.tmp.pcm`;
+  await fs.writeFile(tmpPcm, combinedPcm);
+  try {
+    await execFileAsync(
+      'ffmpeg',
+      [
+        '-y',
+        '-f',
+        's16le',
+        '-ar',
+        '24000',
+        '-ac',
+        '1',
+        '-i',
+        tmpPcm,
+        '-af',
+        'highpass=f=75,equalizer=f=210:t=q:w=1.1:g=2.0,equalizer=f=4400:t=q:w=1.3:g=-1.5,loudnorm=I=-16:TP=-1.5:LRA=9',
+        '-ar',
+        '24000',
+        '-ac',
+        '1',
+        '-c:a',
+        'pcm_s16le',
+        params.outputWavPath,
+      ],
+      { timeout: 25000 }
+    );
+  } finally {
+    await fs.unlink(tmpPcm).catch(() => {});
   }
 
   const stat = await fs.stat(params.outputWavPath);
@@ -196,6 +416,8 @@ function dimensionsForAspect(aspectRatio: '9:16' | '1:1' | '16:9'): { w: number;
 export interface FfmpegRenderOptions {
   portraitPath: string;
   sceneImagePaths?: string[];
+  sceneBackgroundPaths?: string[];
+  presenterMode?: 'auto_match' | 'faceless_broll' | 'twin_owner' | 'cast_ananya' | 'cast_meera' | 'cast_kabir';
   audioPath?: string;
   durationSec: number;
   aspectRatio: '9:16' | '1:1' | '16:9';
@@ -203,7 +425,7 @@ export interface FfmpegRenderOptions {
   speakingSpeed?: number;
   title: string;
   captionExcerpt: string;
-  backgroundStyle: 'Studio Ivory Linen' | 'Warm Charcoal' | 'Architectural Daylight';
+  backgroundStyle: string;
   subtitlesEnabled: boolean;
   aiDisclosureWatermark: boolean;
   watermarkText: string;
@@ -232,16 +454,22 @@ export async function renderTwinVideoFFmpeg(opts: FfmpegRenderOptions): Promise<
   }
 
   const drawtextSupported = await hasDrawtextFilter();
-  const isVideoPortrait = /\.(mp4|mov|webm)$/i.test(opts.portraitPath);
+  const isVideoPortrait = Boolean(opts.portraitPath && /\.(mp4|mov|webm)$/i.test(opts.portraitPath));
 
   const bgColor =
     opts.backgroundStyle === 'Warm Charcoal'
       ? '0x1A1917'
-      : opts.backgroundStyle === 'Architectural Daylight'
-        ? '0xEAE4D7'
-        : '0xF6F3EC';
+      : opts.backgroundStyle === 'Cosmic & Science Lab'
+        ? '0x0F1528'
+        : opts.backgroundStyle === 'Warm Comedy Stage'
+          ? '0x2A1D15'
+          : opts.backgroundStyle === 'Auto-Match Script Theme'
+            ? '0x181715'
+            : opts.backgroundStyle === 'Architectural Daylight'
+              ? '0xEAE4D7'
+              : '0xF6F3EC';
 
-  // Deduplicate available scene images for multi-angle choreography
+  // Deduplicate available presenter portrait paths
   const uniqueImages: string[] = [];
   for (const p of [opts.portraitPath, ...(opts.sceneImagePaths || [])]) {
     if (p && !/\.(mp4|mov|webm)$/i.test(p) && !uniqueImages.includes(p)) {
@@ -252,6 +480,23 @@ export async function renderTwinVideoFFmpeg(opts: FfmpegRenderOptions): Promise<
         // skip unreachable path
       }
     }
+  }
+
+  // Deduplicate script-matched B-roll scene backgrounds
+  const bgImages: string[] = [];
+  for (const p of opts.sceneBackgroundPaths || []) {
+    if (p && !/\.(mp4|mov|webm)$/i.test(p) && !bgImages.includes(p)) {
+      try {
+        await fs.access(p);
+        bgImages.push(p);
+      } catch {
+        // skip unreachable path
+      }
+    }
+  }
+
+  if (uniqueImages.length === 0 && bgImages.length > 0) {
+    uniqueImages.push(bgImages[0]);
   }
   if (uniqueImages.length === 0 && !isVideoPortrait) {
     uniqueImages.push(opts.portraitPath);
@@ -279,14 +524,28 @@ export async function renderTwinVideoFFmpeg(opts: FfmpegRenderOptions): Promise<
     const rawShotDur = Number(((targetDuration + xfadeDur * (shotCount - 1)) / shotCount).toFixed(2));
     const shotFrames = Math.max(60, Math.round(rawShotDur * fps));
 
-    const shotImages = [
-      uniqueImages[0],
-      uniqueImages[1 % uniqueImages.length],
-      uniqueImages[2 % uniqueImages.length],
-      uniqueImages[0],
-      uniqueImages[1 % uniqueImages.length],
-      uniqueImages[2 % uniqueImages.length],
-    ];
+    let shotImages: string[];
+    if (opts.presenterMode === 'faceless_broll' && bgImages.length > 0) {
+      shotImages = Array.from({ length: 6 }, (_, idx) => bgImages[idx % bgImages.length]);
+    } else if (bgImages.length > 0) {
+      shotImages = [
+        uniqueImages[0],
+        bgImages[0],
+        bgImages[1 % bgImages.length],
+        uniqueImages[1 % uniqueImages.length] || bgImages[2 % bgImages.length],
+        bgImages[2 % bgImages.length],
+        bgImages[3 % bgImages.length] || uniqueImages[0],
+      ];
+    } else {
+      shotImages = [
+        uniqueImages[0],
+        uniqueImages[1 % uniqueImages.length],
+        uniqueImages[2 % uniqueImages.length],
+        uniqueImages[0],
+        uniqueImages[1 % uniqueImages.length],
+        uniqueImages[2 % uniqueImages.length],
+      ];
+    }
 
     for (const imgPath of shotImages) {
       args.push('-loop', '1', '-t', String(rawShotDur + 0.2), '-framerate', String(fps), '-i', imgPath);
@@ -371,8 +630,13 @@ export async function renderTwinVideoFFmpeg(opts: FfmpegRenderOptions): Promise<
   let lastTag = 'waved';
 
   if (drawtextSupported) {
-    const textColor = opts.backgroundStyle === 'Warm Charcoal' ? '0xF6F3EC' : '0x242421';
-    const subtleColor = opts.backgroundStyle === 'Warm Charcoal' ? '0xB69A65' : '0x77766F';
+    const isDarkBar =
+      opts.backgroundStyle === 'Warm Charcoal' ||
+      opts.backgroundStyle === 'Auto-Match Script Theme' ||
+      opts.backgroundStyle === 'Cosmic & Science Lab' ||
+      opts.backgroundStyle === 'Warm Comedy Stage';
+    const textColor = isDarkBar ? '0xF6F3EC' : '0x242421';
+    const subtleColor = isDarkBar ? '0xD8B36A' : '0x77766F';
 
     if (opts.aiDisclosureWatermark) {
       const wm = escapeDrawtext(opts.watermarkText || 'AI DIGITAL TWIN · AUTHORIZED LIKENESS');

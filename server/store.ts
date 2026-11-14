@@ -167,17 +167,17 @@ function defaultIntegrations(geminiOk: boolean, ffmpegOk: boolean): IntegrationC
   return [
     {
       id: 'free_hindi_neural',
-      name: 'Free Natural Hindi & Indian Neural Voice',
+      name: 'Free Natural Hindi & Conversational Neural Voices',
       category: 'Voice Engine',
       tier: 'local_free',
-      description: 'Zero-cost neural speech engine for fluent Devanagari Hindi, conversational Hinglish, and Indian English voices (Madhur, Swara, Prabhat, Neerja).',
+      description: 'Zero-cost neural speech engine with 8 expressive Male & Female conversational voices (Andrew, Ava, Brian, Emma, Madhur, Swara, Prabhat, Neerja) plus natural breathing pauses & vocal warmth EQ.',
       configured: true,
       endpointUrl: 'free://neural-hindi-tts',
       status: 'connected',
-      capabilities: ['$0.00 Free Tier', 'Natural Hindi & Hinglish', '4 Indian Neural Voices', '24kHz WAV Master'],
+      capabilities: ['$0.00 Free Tier', '8 Male & Female Voices', 'Natural Hindi Pauses & Warmth', '24kHz Warm EQ Master'],
       supportsVoiceCloning: false,
       lastCheckedAt: new Date().toISOString(),
-      notes: 'Active in $0.00 Free Tier for Persona Creation & Studio MP4 renders. Distinct from paid personal voice cloning.',
+      notes: 'Active in $0.00 Free Tier via My Digital Twin Persona Settings & Studio MP4 renders. Distinct from paid personal voice cloning.',
     },
     {
       id: 'gemini_intelligence',
@@ -483,7 +483,11 @@ function createInitialLiveState(geminiOk: boolean, ffmpegOk: boolean): Workspace
       catchphrases: [],
       primaryLanguage: 'Hindi',
       preferredVoiceProvider: 'free_hindi_neural',
-      preferredVoiceId: 'hi-IN-MadhurNeural',
+      preferredVoiceId: 'en-US-AndrewMultilingualNeural',
+      voiceProsodyPreset: 'warm_storyteller',
+      voicePitchWarmth: 'warm',
+      voicePace: 0.95,
+      naturalPausesEnabled: true,
     },
     consent: {
       attested: false,
@@ -629,7 +633,11 @@ function createInitialDemoState(geminiOk: boolean, ffmpegOk: boolean): Workspace
       catchphrases: ['Let us break the signal from the noise.', 'Seedha point pe aate hain.'],
       primaryLanguage: 'Hinglish',
       preferredVoiceProvider: 'free_hindi_neural',
-      preferredVoiceId: 'hi-IN-MadhurNeural',
+      preferredVoiceId: 'en-US-AndrewMultilingualNeural',
+      voiceProsodyPreset: 'warm_storyteller',
+      voicePitchWarmth: 'warm',
+      voicePace: 0.95,
+      naturalPausesEnabled: true,
     },
     consent: {
       attested: true,
@@ -1175,7 +1183,19 @@ export async function readWorkspace(mode: WorkspaceMode): Promise<WorkspaceState
     parsed.twin.personality.preferredVoiceProvider = 'free_hindi_neural';
   }
   if (!parsed.twin.personality.preferredVoiceId) {
-    parsed.twin.personality.preferredVoiceId = 'hi-IN-MadhurNeural';
+    parsed.twin.personality.preferredVoiceId = 'en-US-AndrewMultilingualNeural';
+  }
+  if (!parsed.twin.personality.voiceProsodyPreset) {
+    parsed.twin.personality.voiceProsodyPreset = 'warm_storyteller';
+  }
+  if (!parsed.twin.personality.voicePitchWarmth) {
+    parsed.twin.personality.voicePitchWarmth = 'warm';
+  }
+  if (typeof parsed.twin.personality.voicePace !== 'number') {
+    parsed.twin.personality.voicePace = 0.95;
+  }
+  if (typeof parsed.twin.personality.naturalPausesEnabled !== 'boolean') {
+    parsed.twin.personality.naturalPausesEnabled = true;
   }
   parsed.twin.readiness = computeReadiness(parsed.twin);
   parsed.capabilities = {

@@ -341,11 +341,20 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                     }}
                     className="flex-1 px-3 py-2 border border-[#E4DDD0] bg-[#FFFFFF] text-[13px] rounded-sm"
                   >
-                    {FREE_HINDI_VOICES.map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.label}
-                      </option>
-                    ))}
+                    <optgroup label="Male — Expressive & Conversational Hindi / Hinglish">
+                      {FREE_HINDI_VOICES.filter((v) => v.gender === 'Male').map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Female — Expressive & Warm Hindi / Hinglish">
+                      {FREE_HINDI_VOICES.filter((v) => v.gender === 'Female').map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.label}
+                        </option>
+                      ))}
+                    </optgroup>
                   </select>
                   <button
                     type="button"

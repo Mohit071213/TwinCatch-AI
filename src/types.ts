@@ -55,6 +55,14 @@ export interface VoiceSample {
   uploadedAt: string;
 }
 
+export type VoiceProsodyPreset =
+  | 'warm_storyteller'
+  | 'friendly_explainer'
+  | 'calm_mentor'
+  | 'lively_creator';
+
+export type VoicePitchWarmth = 'warm' | 'natural' | 'bright';
+
 export interface PersonalityProfile {
   creatorName: string;
   handle: string;
@@ -68,6 +76,10 @@ export interface PersonalityProfile {
   primaryLanguage: TwinLanguage;
   preferredVoiceProvider?: VoiceProviderId;
   preferredVoiceId?: string;
+  voiceProsodyPreset?: VoiceProsodyPreset;
+  voicePitchWarmth?: VoicePitchWarmth;
+  voicePace?: number;
+  naturalPausesEnabled?: boolean;
 }
 
 export interface ConsentRecord {
@@ -259,6 +271,43 @@ export interface CostEstimate {
   recommendedUpgradeReason?: string;
 }
 
+export type PresenterVisualMode =
+  | 'auto_match'
+  | 'faceless_broll'
+  | 'twin_owner'
+  | 'cast_ananya'
+  | 'cast_meera'
+  | 'cast_kabir';
+
+export type BackgroundStyleType =
+  | 'Auto-Match Script Theme'
+  | 'Studio Ivory Linen'
+  | 'Warm Charcoal'
+  | 'Architectural Daylight'
+  | 'Cosmic & Science Lab'
+  | 'Warm Comedy Stage';
+
+export interface SceneVisualBeat {
+  beatIndex: number;
+  startPct: number;
+  endPct: number;
+  headline: string;
+  spokenCue: string;
+  searchQuery: string;
+  themeMood:
+    | 'cosmic_space'
+    | 'science_tech'
+    | 'comedy_office'
+    | 'finance_business'
+    | 'history_world'
+    | 'mind_psychology'
+    | 'nature_earth'
+    | 'studio_editorial';
+  bgHex: string;
+  accentHex: string;
+  imageUrl?: string;
+}
+
 export interface VideoRenderJob {
   id: string;
   title: string;
@@ -273,7 +322,8 @@ export interface VideoRenderJob {
   language: TwinLanguage;
   emotion: string;
   framing: 'Close-Up Studio' | 'Medium Editorial' | 'Presenter Bust';
-  backgroundStyle: 'Studio Ivory Linen' | 'Warm Charcoal' | 'Architectural Daylight';
+  backgroundStyle: BackgroundStyleType | string;
+  presenterMode?: PresenterVisualMode;
   wardrobeNote: string;
   speakingSpeed: number;
   voiceIntensity: 'Measured' | 'Balanced' | 'Dynamic';

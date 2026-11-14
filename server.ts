@@ -8,6 +8,7 @@ import { createServer as createViteServer } from 'vite';
 import type {
   CostEstimate,
   FaceCategory,
+  PresenterVisualMode,
   QualityTier,
   RewriteAction,
   ScriptGenre,
@@ -51,6 +52,7 @@ import {
   resetLiveWorkspace,
   writeWorkspace,
 } from './server/store.ts';
+import { SCENE_CACHE_DIR, planAndFetchScriptVisuals } from './server/visualDirector.ts';
 
 function resolveMode(req: express.Request): WorkspaceMode {
   const header = req.headers['x-workspace-mode'];
@@ -187,11 +189,13 @@ async function startServer() {
   });
 
   // Safe local media static routes
+  await fs.mkdir(SCENE_CACHE_DIR, { recursive: true });
   app.use('/api/media/uploads', express.static(UPLOADS_DIR));
   app.use('/api/media/audio', express.static(AUDIO_DIR));
   app.use('/api/media/videos', express.static(VIDEOS_DIR));
   app.use('/api/media/covers', express.static(COVERS_DIR));
   app.use('/api/media/demo', express.static(DEMO_ASSETS_DIR));
+  app.use('/api/media/scenes', express.static(SCENE_CACHE_DIR));
 
   // Health check endpoint
   app.get('/api/health', (_req, res) => {
@@ -840,13 +844,26 @@ async function startServer() {
     try {
       const mode = resolveMode(req);
       const state = await readWorkspace(mode);
-      const { text, provider, voiceIdentity, language, emotion, speakingSpeed } = req.body as {
+      const {
+        text,
+        provider,
+        voiceIdentity,
+        language,
+        emotion,
+        speakingSpeed,
+        prosodyPreset,
+        pitchWarmth,
+        naturalPauses,
+      } = req.body as {
         text: string;
         provider: VoiceProviderId;
         voiceIdentity: string;
         language: TwinLanguage;
         emotion: string;
         speakingSpeed?: number;
+        prosodyPreset?: any;
+        pitchWarmth?: any;
+        naturalPauses?: boolean;
       };
 
       if (!text || !text.trim()) {
@@ -858,20 +875,24 @@ async function startServer() {
 
       let actualTtsModel = '';
       let resolvedProvider: VoiceProviderId = provider;
-      let resolvedVoiceLabel = voiceIdentity || 'hi-IN-MadhurNeural';
+      let resolvedVoiceLabel = voiceIdentity || 'en-US-AndrewMultilingualNeural';
       let fallbackNotice: string | undefined;
 
       if (provider === 'free_hindi_neural') {
         try {
+          const persona = state.twin.personality;
           const edgeRes = await synthesizeEdgeNeuralSpeechWav({
-            text: text.slice(0, 1800),
-            voiceIdentity: voiceIdentity || 'hi-IN-MadhurNeural',
+            text: text.slice(0, 2200),
+            voiceIdentity: voiceIdentity || persona.preferredVoiceId || 'en-US-AndrewMultilingualNeural',
             language: language || 'Hindi',
-            speakingSpeed: Number(speakingSpeed) || 1.0,
+            speakingSpeed: Number(speakingSpeed) || persona.voicePace || 0.95,
+            prosodyPreset: prosodyPreset || persona.voiceProsodyPreset || 'warm_storyteller',
+            pitchWarmth: pitchWarmth || persona.voicePitchWarmth || 'warm',
+            naturalPauses: typeof naturalPauses === 'boolean' ? naturalPauses : persona.naturalPausesEnabled !== false,
             outputWavPath: outPath,
           });
           actualTtsModel = edgeRes.voiceUsed;
-          resolvedVoiceLabel = `${edgeRes.voiceUsed} (Free Natural Neural Voice)`;
+          resolvedVoiceLabel = `${edgeRes.voiceUsed} (Free Conversational Hindi Neural)`;
         } catch (edgeErr: any) {
           // Explicit documented fallback to Gemini Lite TTS if Edge TTS endpoint is temporarily unreachable
           const ttsResult = await synthesizeGeminiSpeechWav({
@@ -1028,6 +1049,53 @@ async function startServer() {
     }
   });
 
+  // Plan script-matched backgrounds & diverse presenter visuals ($0.00 live fetch + Gemini cue extraction)
+  app.post('/api/studio/plan-visuals', async (req, res) => {
+    try {
+      const mode = resolveMode(req);
+      const state = await readWorkspace(mode);
+      const { title, scriptText, language, backgroundStyle, presenterMode, voiceIdentity, portraitAssetId } =
+        req.body as {
+          title?: string;
+          scriptText?: string;
+          language?: TwinLanguage;
+          backgroundStyle?: string;
+          presenterMode?: PresenterVisualMode;
+          voiceIdentity?: string;
+          portraitAssetId?: string;
+        };
+
+      const imageAssets = state.twin.faceAssets
+        .filter((f) => !/\.(mp4|mov|webm)$/i.test(f.url))
+        .map((f) => ({
+          id: f.id,
+          url: f.url,
+          diskPath: resolveLocalAssetPath(f.url) || undefined,
+        }));
+
+      const planned = await planAndFetchScriptVisuals({
+        title: String(title || 'TwinForge Studio Production'),
+        scriptText: String(scriptText || title || ''),
+        language: language || state.twin.personality.primaryLanguage,
+        backgroundStyle: backgroundStyle || 'Auto-Match Script Theme',
+        presenterMode: presenterMode || 'auto_match',
+        voiceIdentity: voiceIdentity || state.twin.personality.preferredVoiceId,
+        mode,
+        twinFaceImageAssets: imageAssets,
+        preferredPortraitId: portraitAssetId,
+      });
+
+      res.json({
+        beats: planned.beats,
+        presenterModeResolved: planned.presenter.presenterModeResolved,
+        presenterLabel: planned.presenter.presenterLabel,
+        presenterImageUrls: planned.presenter.presenterImageUrls,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Visual planning failed.' });
+    }
+  });
+
   // Video Render Pipeline (Local Free, Balanced, or Explicitly Approved Premium)
   app.post('/api/studio/render', async (req, res) => {
     try {
@@ -1071,7 +1139,8 @@ async function startServer() {
         language: TwinLanguage;
         emotion: string;
         framing: 'Close-Up Studio' | 'Medium Editorial' | 'Presenter Bust';
-        backgroundStyle: 'Studio Ivory Linen' | 'Warm Charcoal' | 'Architectural Daylight';
+        backgroundStyle: string;
+        presenterMode?: PresenterVisualMode;
         wardrobeNote: string;
         speakingSpeed: number;
         voiceIntensity: 'Measured' | 'Balanced' | 'Dynamic';
@@ -1103,13 +1172,37 @@ async function startServer() {
         });
       }
 
-      // Resolve portrait asset (uploaded or demo portrait)
+      // Plan script-matched backgrounds & diverse presenter (auto-matched to voice/script or faceless)
+      const twinFaceImgAssets = state.twin.faceAssets
+        .filter((f) => !/\.(mp4|mov|webm)$/i.test(f.url))
+        .map((f) => ({
+          id: f.id,
+          url: f.url,
+          diskPath: resolveLocalAssetPath(f.url) || undefined,
+        }));
+
+      const plannedVisuals = await planAndFetchScriptVisuals({
+        title: title || 'TwinForge Studio Production',
+        scriptText: scriptText || title || '',
+        language: language || state.twin.personality.primaryLanguage,
+        backgroundStyle: backgroundStyle || 'Auto-Match Script Theme',
+        presenterMode: (req.body as any).presenterMode || 'auto_match',
+        voiceIdentity: voiceIdentity || state.twin.personality.preferredVoiceId,
+        mode,
+        twinFaceImageAssets: twinFaceImgAssets,
+        preferredPortraitId: portraitAssetId,
+      });
+
       const chosenAsset =
         state.twin.faceAssets.find((f) => f.id === portraitAssetId) || state.twin.faceAssets[0];
-      const portraitPath = resolveLocalAssetPath(chosenAsset?.url);
+      const portraitPath =
+        plannedVisuals.presenter.presenterDiskPaths[0] ||
+        resolveLocalAssetPath(chosenAsset?.url) ||
+        plannedVisuals.beatDiskPaths.find((p): p is string => Boolean(p));
+
       if (!portraitPath) {
         return res.status(400).json({
-          error: 'Please upload at least one face portrait or reference clip in My Digital Twin before rendering.',
+          error: 'Please upload a portrait or select a presenter/faceless documentary mode before rendering.',
         });
       }
 
@@ -1123,12 +1216,19 @@ async function startServer() {
         if (voiceProvider === 'free_hindi_neural') {
           const wavName = `render_hindi_${Date.now()}_${crypto.randomUUID().slice(0, 4)}.wav`;
           const wavOut = path.join(AUDIO_DIR, wavName);
+          const persona = state.twin.personality;
           try {
             await synthesizeEdgeNeuralSpeechWav({
-              text: spokenText.slice(0, 1800),
-              voiceIdentity: voiceIdentity || 'hi-IN-MadhurNeural',
+              text: spokenText.slice(0, 2200),
+              voiceIdentity: voiceIdentity || persona.preferredVoiceId || 'en-US-AndrewMultilingualNeural',
               language: language || 'Hindi',
-              speakingSpeed: Number(speakingSpeed) || 1.0,
+              speakingSpeed: Number(speakingSpeed) || persona.voicePace || 0.95,
+              prosodyPreset: (req.body as any).prosodyPreset || persona.voiceProsodyPreset || 'warm_storyteller',
+              pitchWarmth: (req.body as any).pitchWarmth || persona.voicePitchWarmth || 'warm',
+              naturalPauses:
+                typeof (req.body as any).naturalPauses === 'boolean'
+                  ? (req.body as any).naturalPauses
+                  : persona.naturalPausesEnabled !== false,
               outputWavPath: wavOut,
             });
             audioPath = wavOut;
@@ -1229,15 +1329,13 @@ async function startServer() {
             });
           }
         }
-        const sceneImagePaths = [
-          portraitPath,
-          ...state.twin.faceAssets
-            .map((a) => resolveLocalAssetPath(a.url))
-            .filter((p): p is string => Boolean(p && p !== portraitPath)),
-        ];
+        const sceneImagePaths = plannedVisuals.presenter.presenterDiskPaths;
+        const sceneBackgroundPaths = plannedVisuals.beatDiskPaths.filter((p): p is string => Boolean(p));
         const rendered = await renderTwinVideoFFmpeg({
           portraitPath,
           sceneImagePaths,
+          sceneBackgroundPaths,
+          presenterMode: plannedVisuals.presenter.presenterModeResolved,
           audioPath,
           durationSec: estSec,
           aspectRatio: aspectRatio || '9:16',
@@ -1245,7 +1343,7 @@ async function startServer() {
           speakingSpeed: Number(speakingSpeed) || 1.0,
           title: title || 'TwinForge Production',
           captionExcerpt: scriptText || title,
-          backgroundStyle: backgroundStyle || 'Studio Ivory Linen',
+          backgroundStyle: backgroundStyle || 'Auto-Match Script Theme',
           subtitlesEnabled: Boolean(subtitlesEnabled),
           aiDisclosureWatermark: Boolean(aiDisclosureWatermark),
           watermarkText: state.settings.watermarkText,
@@ -1256,9 +1354,9 @@ async function startServer() {
         provenanceNote =
           qualityTier === 'local_free'
             ? voiceProvider === 'free_hindi_neural'
-              ? `Free Natural Hindi Neural (${voiceIdentity || 'hi-IN-MadhurNeural'}) + 6-Shot FFmpeg Motion Director ($0.00)`
-              : 'Free 6-Shot FFmpeg Motion Director · Minimum 30s Animated MP4 ($0.00)'
-            : 'Balanced Mode · Gemini Speech + 6-Shot FFmpeg Motion Director';
+              ? `Free Natural Hindi Neural (${voiceIdentity || 'Andrew'}) · ${plannedVisuals.presenter.presenterLabel} · 6-Scene Script B-Roll ($0.00)`
+              : `Free 6-Shot Script B-Roll Director · ${plannedVisuals.presenter.presenterLabel} ($0.00)`
+            : `Balanced Mode · Gemini Speech · ${plannedVisuals.presenter.presenterLabel}`;
       }
 
       const processingMs = Date.now() - startMs;
@@ -1278,7 +1376,8 @@ async function startServer() {
         language: language || 'English',
         emotion: emotion || 'Conversational',
         framing: framing || 'Close-Up Studio',
-        backgroundStyle: backgroundStyle || 'Studio Ivory Linen',
+        backgroundStyle: backgroundStyle || 'Auto-Match Script Theme',
+        presenterMode: plannedVisuals.presenter.presenterModeResolved,
         wardrobeNote: wardrobeNote || 'Studio Attire',
         speakingSpeed: Number(speakingSpeed) || 1.0,
         voiceIntensity: voiceIntensity || 'Balanced',
@@ -1378,7 +1477,8 @@ async function startServer() {
         language: (meta.language as TwinLanguage) || 'Hindi',
         emotion: meta.emotion || 'Conversational',
         framing: (meta.framing as any) || 'Close-Up Studio',
-        backgroundStyle: (meta.backgroundStyle as any) || 'Studio Ivory Linen',
+        backgroundStyle: meta.backgroundStyle || 'Auto-Match Script Theme',
+        presenterMode: (meta.presenterMode as PresenterVisualMode) || 'auto_match',
         wardrobeNote: meta.wardrobeNote || 'Studio Attire',
         speakingSpeed: Number(meta.speakingSpeed) || 1.0,
         voiceIntensity: (meta.voiceIntensity as any) || 'Balanced',

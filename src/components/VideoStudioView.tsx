@@ -5,14 +5,20 @@ import {
   Download,
   Film,
   FlaskConical,
+  Image as ImageIcon,
   Mic,
   Play,
+  RefreshCw,
   ShieldCheck,
+  Users,
   Volume2,
 } from 'lucide-react';
 import type {
+  BackgroundStyleType,
   CostEstimate,
+  PresenterVisualMode,
   QualityTier,
+  SceneVisualBeat,
   TwinLanguage,
   VideoFormatType,
   VideoRenderJob,
@@ -73,11 +79,12 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
   );
   const [emotion, setEmotion] = useState('Warm & Editorial');
   const [framing, setFraming] = useState<'Close-Up Studio' | 'Medium Editorial' | 'Presenter Bust'>('Close-Up Studio');
-  const [backgroundStyle, setBackgroundStyle] = useState<
-    'Studio Ivory Linen' | 'Warm Charcoal' | 'Architectural Daylight'
-  >('Studio Ivory Linen');
+  const [backgroundStyle, setBackgroundStyle] = useState<BackgroundStyleType>('Auto-Match Script Theme');
+  const [presenterMode, setPresenterMode] = useState<PresenterVisualMode>('auto_match');
   const [wardrobeNote, setWardrobeNote] = useState('Tailored charcoal blazer & ivory knit');
-  const [speakingSpeed, setSpeakingSpeed] = useState(1.0);
+  const [speakingSpeed, setSpeakingSpeed] = useState(
+    workspace.twin.personality.voicePace ?? 0.95
+  );
   const [targetDurationSec, setTargetDurationSec] = useState(32);
   const [voiceIntensity, setVoiceIntensity] = useState<'Measured' | 'Balanced' | 'Dynamic'>('Balanced');
   const [subtitlesEnabled, setSubtitlesEnabled] = useState(true);
@@ -103,6 +110,13 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
 
   const [auditionBusy, setAuditionBusy] = useState(false);
   const [renderBusy, setRenderBusy] = useState(false);
+  const [planningVisualsBusy, setPlanningVisualsBusy] = useState(false);
+  const [plannedVisuals, setPlannedVisuals] = useState<{
+    beats: SceneVisualBeat[];
+    presenterModeResolved: PresenterVisualMode;
+    presenterLabel: string;
+    presenterImageUrls: string[];
+  } | null>(null);
   const [canvasProgress, setCanvasProgress] = useState<{ pct: number; phase: string } | null>(null);
   const liveCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [benchmarkBusyId, setBenchmarkBusyId] = useState<string | null>(null);
@@ -152,6 +166,10 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
       .catch(() => {});
   }, [qualityTier, voiceProvider, visualProvider, scriptText, targetDurationSec, mode]);
 
+  useEffect(() => {
+    setPlannedVisuals(null);
+  }, [title, scriptText, presenterMode, backgroundStyle, voiceIdentity, portraitAssetId, language]);
+
   const handleLoadScript = (id: string) => {
     setSelectedScriptId(id);
     const sc = workspace.scripts.find((s) => s.id === id);
@@ -161,6 +179,41 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
     setLanguage(sc.language);
     setFormat(sc.recommendedFormat);
     if (v) setScriptText(`${v.hook3s} ${v.body} ${v.cta}`);
+  };
+
+  const handlePlanVisuals = async () => {
+    if (!scriptText.trim() && !title.trim()) {
+      setError('Enter a title or script before previewing scene visuals.');
+      return null;
+    }
+    setError('');
+    setPlanningVisualsBusy(true);
+    try {
+      const plan = await apiRequest<{
+        beats: SceneVisualBeat[];
+        presenterModeResolved: PresenterVisualMode;
+        presenterLabel: string;
+        presenterImageUrls: string[];
+      }>('/api/studio/plan-visuals', mode, {
+        method: 'POST',
+        body: JSON.stringify({
+          title: title || 'TwinForge Studio Production',
+          scriptText: scriptText || title,
+          language,
+          backgroundStyle,
+          presenterMode,
+          voiceIdentity,
+          portraitAssetId,
+        }),
+      });
+      setPlannedVisuals(plan);
+      return plan;
+    } catch (err: any) {
+      setError(err.message || 'Could not plan script-matched visuals.');
+      return null;
+    } finally {
+      setPlanningVisualsBusy(false);
+    }
   };
 
   const handleAuditionVoice = async () => {
@@ -183,6 +236,9 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
             language,
             emotion,
             speakingSpeed,
+            prosodyPreset: workspace.twin.personality.voiceProsodyPreset || 'warm_storyteller',
+            pitchWarmth: workspace.twin.personality.voicePitchWarmth || 'warm',
+            naturalPauses: workspace.twin.personality.naturalPausesEnabled !== false,
           }),
         }
       );
@@ -202,15 +258,36 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
     setCanvasProgress(null);
     try {
       if (visualProvider === 'free_canvas_animator') {
-        const imageAssets = workspace.twin.faceAssets.filter((f) => !/\.(mp4|mov|webm)$/i.test(f.url));
-        if (imageAssets.length === 0) {
-          throw new Error('Upload at least one portrait image in My Digital Twin before animating.');
+        setCanvasProgress({ pct: 3, phase: 'Matching Script Backgrounds & Presenter' });
+        const visualPlan =
+          plannedVisuals ||
+          (await apiRequest<{
+            beats: SceneVisualBeat[];
+            presenterModeResolved: PresenterVisualMode;
+            presenterLabel: string;
+            presenterImageUrls: string[];
+          }>('/api/studio/plan-visuals', mode, {
+            method: 'POST',
+            body: JSON.stringify({
+              title: title || 'TwinForge Studio Production',
+              scriptText: scriptText || title,
+              language,
+              backgroundStyle,
+              presenterMode,
+              voiceIdentity,
+              portraitAssetId,
+            }),
+          }));
+        setPlannedVisuals(visualPlan);
+
+        if (
+          visualPlan.presenterModeResolved === 'twin_owner' &&
+          visualPlan.presenterImageUrls.length === 0
+        ) {
+          throw new Error(
+            'Upload at least one portrait in My Digital Twin or switch Presenter Visual to Auto-Match / Cast / Faceless Documentary.'
+          );
         }
-        const selectedImg = imageAssets.find((f) => f.id === portraitAssetId) || imageAssets[0];
-        const orderedImageUrls = [
-          selectedImg.url,
-          ...imageAssets.filter((f) => f.id !== selectedImg.id).map((f) => f.url),
-        ];
 
         // Synthesize matching audio track if missing or stale provider/voice mismatch
         const needsFreshAudio =
@@ -225,7 +302,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
             voiceProvider === 'gemini_lite_tts' ||
             voiceProvider === 'ambient_studio')
         ) {
-          setCanvasProgress({ pct: 5, phase: 'Synthesizing Natural Voice Track' });
+          setCanvasProgress({ pct: 6, phase: 'Synthesizing Natural Voice Track' });
           const audRes = await apiRequest<{ workspace: WorkspaceState; audition: VoiceAudition }>(
             '/api/voice/audition',
             mode,
@@ -238,6 +315,9 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                 language,
                 emotion,
                 speakingSpeed,
+                prosodyPreset: workspace.twin.personality.voiceProsodyPreset || 'warm_storyteller',
+                pitchWarmth: workspace.twin.personality.voicePitchWarmth || 'warm',
+                naturalPauses: workspace.twin.personality.naturalPausesEnabled !== false,
               }),
             }
           );
@@ -247,10 +327,12 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
         }
 
         if (typeof MediaRecorder !== 'undefined') {
-          setCanvasProgress({ pct: 10, phase: 'Animating 30fps Multi-Scene Motion (>=30s)' });
+          setCanvasProgress({ pct: 10, phase: 'Animating Multi-Scene Script Visuals (>=30s)' });
           const effectiveDur = Math.max(30, targetDurationSec);
           const recorded = await renderCanvasMotionVideo({
-            imageUrls: orderedImageUrls,
+            imageUrls: visualPlan.presenterImageUrls,
+            visualBeats: visualPlan.beats,
+            presenterMode: visualPlan.presenterModeResolved,
             audioUrl: audioForCanvas?.audioUrl,
             title: title || 'TwinForge Motion Production',
             scriptText: scriptText || title,
@@ -284,6 +366,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
               form.append('emotion', emotion);
               form.append('framing', framing);
               form.append('backgroundStyle', backgroundStyle);
+              form.append('presenterMode', visualPlan.presenterModeResolved);
               form.append('wardrobeNote', wardrobeNote);
               form.append('speakingSpeed', String(speakingSpeed));
               form.append('targetDurationSec', String(effectiveDur));
@@ -332,8 +415,12 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                 emotion,
                 framing,
                 backgroundStyle,
+                presenterMode: visualPlan.presenterModeResolved,
                 wardrobeNote,
                 speakingSpeed,
+                prosodyPreset: workspace.twin.personality.voiceProsodyPreset || 'warm_storyteller',
+                pitchWarmth: workspace.twin.personality.voicePitchWarmth || 'warm',
+                naturalPauses: workspace.twin.personality.naturalPausesEnabled !== false,
                 targetDurationSec: effectiveDur,
                 voiceIntensity,
                 subtitlesEnabled,
@@ -377,8 +464,12 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
             emotion,
             framing,
             backgroundStyle,
+            presenterMode,
             wardrobeNote,
             speakingSpeed,
+            prosodyPreset: workspace.twin.personality.voiceProsodyPreset || 'warm_storyteller',
+            pitchWarmth: workspace.twin.personality.voicePitchWarmth || 'warm',
+            naturalPauses: workspace.twin.personality.naturalPausesEnabled !== false,
             targetDurationSec: Math.max(30, targetDurationSec),
             voiceIntensity,
             subtitlesEnabled,
@@ -563,8 +654,8 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
           {/* Main Studio Split: Controls Left, Dark Preview Stage Right */}
           <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
             <div className="xl:col-span-7 bg-[#FFFFFF] border border-[#E4DDD0] rounded-sm p-6 space-y-5">
-              {/* Script & Portrait Selection */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Script, Presenter Visual Mode & Twin Portrait Selection */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#77766F] mb-1">
                     Load Approved Script
@@ -585,12 +676,31 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
 
                 <div>
                   <label className="block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#77766F] mb-1">
-                    Twin Visual Reference
+                    Presenter Visual / Cast
+                  </label>
+                  <select
+                    value={presenterMode}
+                    onChange={(e) => setPresenterMode(e.target.value as PresenterVisualMode)}
+                    className="w-full px-3 py-2 border border-[#E4DDD0] bg-[#F6F3EC] text-[13px] rounded-sm"
+                  >
+                    <option value="auto_match">Auto-Match Voice &amp; Script</option>
+                    <option value="faceless_broll">Visual Documentary Only (No Face)</option>
+                    <option value="cast_ananya">Ananya · Warm Hindi Host</option>
+                    <option value="cast_meera">Meera · Science &amp; Tech Educator</option>
+                    <option value="cast_kabir">Kabir · Comedy &amp; Story Host</option>
+                    <option value="twin_owner">My Uploaded Twin Portrait</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#77766F] mb-1">
+                    My Twin Portrait
                   </label>
                   <select
                     value={portraitAssetId}
                     onChange={(e) => setPortraitAssetId(e.target.value)}
-                    className="w-full px-3 py-2 border border-[#E4DDD0] bg-[#F6F3EC] text-[13px] rounded-sm"
+                    disabled={presenterMode !== 'twin_owner' && presenterMode !== 'auto_match'}
+                    className="w-full px-3 py-2 border border-[#E4DDD0] bg-[#F6F3EC] text-[13px] rounded-sm disabled:opacity-60"
                   >
                     {workspace.twin.faceAssets.length === 0 ? (
                       <option value="">No portraits uploaded yet</option>
@@ -674,11 +784,22 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                       className="w-full px-2.5 py-1.5 border border-[#E4DDD0] bg-[#FFFFFF] text-[12.5px] rounded-sm"
                     >
                       {voiceProvider === 'free_hindi_neural' ? (
-                        FREE_HINDI_VOICES.map((v) => (
-                          <option key={v.id} value={v.id}>
-                            {v.label}
-                          </option>
-                        ))
+                        <>
+                          <optgroup label="Male — Conversational Hindi / Hinglish">
+                            {FREE_HINDI_VOICES.filter((v) => v.gender === 'Male').map((v) => (
+                              <option key={v.id} value={v.id}>
+                                {v.label}
+                              </option>
+                            ))}
+                          </optgroup>
+                          <optgroup label="Female — Expressive Hindi / Hinglish">
+                            {FREE_HINDI_VOICES.filter((v) => v.gender === 'Female').map((v) => (
+                              <option key={v.id} value={v.id}>
+                                {v.label}
+                              </option>
+                            ))}
+                          </optgroup>
+                        </>
                       ) : voiceProvider === 'ambient_studio' ? (
                         <option value="Studio Beat">Warm Studio Harmonic Bed</option>
                       ) : (
@@ -797,13 +918,16 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                 </div>
                 <div>
                   <label className="block text-[11px] font-semibold uppercase tracking-[0.08em] text-[#77766F] mb-1">
-                    Background
+                    Background Scene Engine
                   </label>
                   <select
                     value={backgroundStyle}
-                    onChange={(e) => setBackgroundStyle(e.target.value as any)}
+                    onChange={(e) => setBackgroundStyle(e.target.value as BackgroundStyleType)}
                     className="w-full px-2.5 py-2 border border-[#E4DDD0] text-[12.5px] rounded-sm"
                   >
+                    <option value="Auto-Match Script Theme">Auto-Match Script Theme (6-Beat B-Roll)</option>
+                    <option value="Cosmic & Science Lab">Cosmic &amp; Science Lab</option>
+                    <option value="Warm Comedy Stage">Warm Comedy Stage</option>
                     <option value="Studio Ivory Linen">Studio Ivory Linen</option>
                     <option value="Warm Charcoal">Warm Charcoal</option>
                     <option value="Architectural Daylight">Architectural Daylight</option>
@@ -895,6 +1019,101 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                     <span>AI Disclosure</span>
                   </label>
                 </div>
+              </div>
+
+              {/* Script-Matched Storyboard & Presenter Preview */}
+              <div className="p-4 bg-[#FAF8F4] border border-[#E4DDD0] rounded-sm space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[11.5px] font-semibold uppercase tracking-[0.08em] text-[#242421] inline-flex items-center gap-1.5">
+                      <ImageIcon className="w-3.5 h-3.5 text-[#B69A65]" />
+                      <span>Script-Matched 6-Beat Visual Storyboard</span>
+                    </div>
+                    <p className="text-[12px] text-[#77766F] mt-0.5">
+                      Automatically switches presenters to match voice gender &amp; fetches topic photography for every
+                      spoken beat.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={planningVisualsBusy}
+                    onClick={handlePlanVisuals}
+                    className="px-3.5 py-1.5 bg-[#FFFFFF] border border-[#242421] text-[#242421] text-[12px] font-semibold rounded-sm inline-flex items-center gap-1.5 hover:bg-[#EFE8D8] shrink-0"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 text-[#B69A65] ${planningVisualsBusy ? 'animate-spin' : ''}`} />
+                    <span>
+                      {planningVisualsBusy
+                        ? 'Matching Scenes...'
+                        : plannedVisuals
+                          ? 'Refresh Visuals'
+                          : 'Preview Scene Visuals'}
+                    </span>
+                  </button>
+                </div>
+
+                {plannedVisuals && (
+                  <div className="space-y-3 pt-2 border-t border-[#E4DDD0]">
+                    <div className="flex items-center gap-3 bg-[#FFFFFF] border border-[#E4DDD0] p-2.5 rounded-sm">
+                      {plannedVisuals.presenterImageUrls[0] ? (
+                        <img
+                          src={plannedVisuals.presenterImageUrls[0]}
+                          alt={plannedVisuals.presenterLabel}
+                          className="w-11 h-11 object-cover rounded-sm border border-[#E4DDD0] shrink-0"
+                        />
+                      ) : (
+                        <div className="w-11 h-11 bg-[#242421] text-[#B69A65] flex items-center justify-center rounded-sm shrink-0">
+                          <Film className="w-5 h-5" />
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <div className="text-[10.5px] font-mono uppercase tracking-[0.12em] text-[#77766F] inline-flex items-center gap-1">
+                          <Users className="w-3 h-3 text-[#B69A65]" />
+                          <span>Active Presenter Cast</span>
+                        </div>
+                        <div className="text-[13px] font-semibold text-[#242421] truncate">
+                          {plannedVisuals.presenterLabel}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                      {plannedVisuals.beats.map((b) => (
+                        <div
+                          key={b.beatIndex}
+                          className="bg-[#FFFFFF] border border-[#E4DDD0] rounded-sm overflow-hidden flex flex-col"
+                        >
+                          <div className="h-20 bg-[#1A1917] relative overflow-hidden">
+                            {b.imageUrl ? (
+                              <img
+                                src={b.imageUrl}
+                                alt={b.headline}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <div
+                                className="w-full h-full flex items-center justify-center text-[10px] font-mono text-[#F6F3EC]/80 px-2 text-center"
+                                style={{ backgroundColor: b.bgHex }}
+                              >
+                                {b.themeMood.replace('_', ' ').toUpperCase()}
+                              </div>
+                            )}
+                            <div className="absolute top-1.5 left-1.5 px-1.5 py-0.5 bg-[#1A1917]/85 text-[#F6F3EC] text-[9.5px] font-mono rounded-sm">
+                              {Math.round(b.startPct * 100)}%–{Math.round(b.endPct * 100)}%
+                            </div>
+                          </div>
+                          <div className="p-2 space-y-1">
+                            <div className="text-[11px] font-semibold text-[#242421] leading-tight line-clamp-1">
+                              {b.headline}
+                            </div>
+                            <div className="text-[10.5px] text-[#77766F] line-clamp-2 leading-snug">
+                              {b.spokenCue}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Cost Ledger & Render Action */}
