@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  BookOpen,
   CheckCircle2,
   Download,
   Film,
@@ -9,7 +10,10 @@ import {
   Mic,
   Play,
   RefreshCw,
+  RotateCcw,
   ShieldCheck,
+  SlidersHorizontal,
+  Sparkles,
   Users,
   Volume2,
 } from 'lucide-react';
@@ -20,6 +24,7 @@ import type {
   ProductionStyle,
   QualityTier,
   SceneVisualBeat,
+  ScriptGenre,
   TwinLanguage,
   VideoFormatType,
   VideoRenderJob,
@@ -28,10 +33,12 @@ import type {
   VoiceProviderId,
   WorkspaceMode,
   WorkspaceState,
+  WritingStyleMode,
 } from '../types';
 import { apiRequest, formatCurrency } from '../lib/api';
 import { renderCanvasMotionVideo } from '../lib/canvasAnimator';
 import { FREE_HINDI_VOICES, GEMINI_STUDIO_VOICES, defaultVoiceForProvider } from '../lib/voices';
+import { PromptLibraryModal } from './PromptLibraryModal';
 
 interface VideoStudioViewProps {
   workspace: WorkspaceState;
@@ -68,6 +75,10 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
     initialScript?.variants?.find((v) => v.id === initialScript.selectedVariantId) || initialScript?.variants?.[0];
 
   const [selectedScriptId, setSelectedScriptId] = useState(initialScript?.id || '');
+  const [scriptGenre, setScriptGenre] = useState<ScriptGenre | undefined>(initialScript?.genre);
+  const [scriptWritingStyle, setScriptWritingStyle] = useState<WritingStyleMode | undefined>(
+    initialScript?.writingStyle
+  );
   const [title, setTitle] = useState(initialScript?.trendTopic.slice(0, 60) || 'TwinForge Studio Dispatch');
   const [scriptText, setScriptText] = useState(
     initialVariant ? `${initialVariant.hook3s} ${initialVariant.body} ${initialVariant.cta}` : ''
@@ -119,11 +130,15 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
   const [auditionBusy, setAuditionBusy] = useState(false);
   const [renderBusy, setRenderBusy] = useState(false);
   const [planningVisualsBusy, setPlanningVisualsBusy] = useState(false);
+  const [beatTemplateOverrides, setBeatTemplateOverrides] = useState<Record<number, string>>({});
+  const [promptLibraryOpen, setPromptLibraryOpen] = useState(false);
+  const [promptLibraryTargetBeat, setPromptLibraryTargetBeat] = useState(0);
   const [plannedVisuals, setPlannedVisuals] = useState<{
     beats: SceneVisualBeat[];
     presenterModeResolved: PresenterVisualMode;
     presenterLabel: string;
     presenterImageUrls: string[];
+    visionAnalysisUsed?: boolean;
   } | null>(null);
   const [canvasProgress, setCanvasProgress] = useState<{ pct: number; phase: string } | null>(null);
   const liveCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -179,6 +194,8 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
   }, [
     title,
     scriptText,
+    scriptGenre,
+    scriptWritingStyle,
     presenterMode,
     productionStyle,
     format,
@@ -190,12 +207,19 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
 
   const handleLoadScript = (id: string) => {
     setSelectedScriptId(id);
+    setBeatTemplateOverrides({});
     const sc = workspace.scripts.find((s) => s.id === id);
-    if (!sc) return;
+    if (!sc) {
+      setScriptGenre(undefined);
+      setScriptWritingStyle(undefined);
+      return;
+    }
     const v = sc.variants.find((x) => x.id === sc.selectedVariantId) || sc.variants[0];
     setTitle(sc.trendTopic.slice(0, 60));
     setLanguage(sc.language);
     setFormat(sc.recommendedFormat);
+    setScriptGenre(sc.genre);
+    setScriptWritingStyle(sc.writingStyle);
     const isComedyScript =
       sc.genre === 'Comedy' ||
       sc.recommendedFormat === 'Original Reaction' ||
@@ -213,11 +237,12 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
     if (v) setScriptText(`${v.hook3s} ${v.body} ${v.cta}`);
   };
 
-  const handlePlanVisuals = async () => {
+  const handlePlanVisuals = async (overridesArg?: Record<number, string>) => {
     if (!scriptText.trim() && !title.trim()) {
       setError('Enter a title or script before previewing scene visuals.');
       return null;
     }
+    const activeOverrides = overridesArg ?? beatTemplateOverrides;
     setError('');
     setPlanningVisualsBusy(true);
     try {
@@ -227,6 +252,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
         presenterLabel: string;
         presenterImageUrls: string[];
         productionStyleResolved?: Exclude<ProductionStyle, 'auto_genre'>;
+        visionAnalysisUsed?: boolean;
       }>('/api/studio/plan-visuals', mode, {
         method: 'POST',
         body: JSON.stringify({
@@ -234,11 +260,15 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
           scriptText: scriptText || title,
           language,
           format,
+          genre: scriptGenre,
+          writingStyle: scriptWritingStyle,
+          emotion,
           backgroundStyle,
           presenterMode,
           productionStyle,
           voiceIdentity,
           portraitAssetId,
+          beatTemplateOverrides: activeOverrides,
         }),
       });
       if (!plan || !Array.isArray(plan.beats) || !Array.isArray(plan.presenterImageUrls)) {
@@ -252,6 +282,18 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
     } finally {
       setPlanningVisualsBusy(false);
     }
+  };
+
+  const handleSelectPromptTemplate = async (beatIndex: number, templateId: string) => {
+    const nextOverrides = { ...beatTemplateOverrides, [beatIndex]: templateId };
+    setBeatTemplateOverrides(nextOverrides);
+    setPromptLibraryOpen(false);
+    await handlePlanVisuals(nextOverrides);
+  };
+
+  const handleResetOverrides = async () => {
+    setBeatTemplateOverrides({});
+    await handlePlanVisuals({});
   };
 
   const handleAuditionVoice = async () => {
@@ -312,6 +354,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
             presenterLabel: string;
             presenterImageUrls: string[];
             productionStyleResolved?: Exclude<ProductionStyle, 'auto_genre'>;
+            visionAnalysisUsed?: boolean;
           }>('/api/studio/plan-visuals', mode, {
             method: 'POST',
             body: JSON.stringify({
@@ -319,11 +362,15 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
               scriptText: scriptText || title,
               language,
               format,
+              genre: scriptGenre,
+              writingStyle: scriptWritingStyle,
+              emotion,
               backgroundStyle,
               presenterMode,
               productionStyle,
               voiceIdentity,
               portraitAssetId,
+              beatTemplateOverrides,
             }),
           }));
         if (
@@ -476,6 +523,8 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                 visualProvider: 'ffmpeg_local',
                 aspectRatio,
                 format,
+                genre: scriptGenre,
+                writingStyle: scriptWritingStyle,
                 language,
                 emotion,
                 framing,
@@ -499,6 +548,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                 aiDisclosureWatermark: aiWatermark,
                 portraitAssetId,
                 auditionAudioUrl: audioForCanvas?.audioUrl,
+                beatTemplateOverrides,
                 approvedPaidCharge,
               }),
             }
@@ -532,6 +582,8 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
             visualProvider: visualProvider === 'free_canvas_animator' ? 'ffmpeg_local' : visualProvider,
             aspectRatio,
             format,
+            genre: scriptGenre,
+            writingStyle: scriptWritingStyle,
             language,
             emotion,
             framing,
@@ -555,6 +607,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
             aiDisclosureWatermark: aiWatermark,
             portraitAssetId,
             auditionAudioUrl: matchingAuditionUrl,
+            beatTemplateOverrides,
             approvedPaidCharge,
           }),
         }
@@ -1122,108 +1175,174 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                 </div>
               </div>
 
-              {/* Script-Matched Storyboard & Presenter Preview */}
+              {/* Gemini Vision Prompt-Library Storyboard & Presenter Preview */}
               <div className="p-4 bg-[#FAF8F4] border border-[#E4DDD0] rounded-sm space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
                   <div>
                     <div className="text-[11.5px] font-semibold uppercase tracking-[0.08em] text-[#242421] inline-flex items-center gap-1.5">
                       <ImageIcon className="w-3.5 h-3.5 text-[#B69A65]" />
-                      <span>Script-Matched 6-Beat Visual Storyboard</span>
+                      <span>Gemini Vision Prompt-Library Storyboard</span>
                     </div>
                     <p className="text-[12px] text-[#77766F] mt-0.5">
-                      Automatically switches presenters to match voice gender &amp; fetches topic photography for every
-                      spoken beat.
+                      Free Gemini Vision inspects your presenter portrait, script context, and candidate scenes to assign
+                      kinetic motion-graphic presets and animated clips.
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    disabled={planningVisualsBusy}
-                    onClick={handlePlanVisuals}
-                    className="px-3.5 py-1.5 bg-[#FFFFFF] border border-[#242421] text-[#242421] text-[12px] font-semibold rounded-sm inline-flex items-center gap-1.5 hover:bg-[#EFE8D8] shrink-0"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 text-[#B69A65] ${planningVisualsBusy ? 'animate-spin' : ''}`} />
-                    <span>
-                      {planningVisualsBusy
-                        ? 'Matching Scenes...'
-                        : plannedVisuals
-                          ? 'Refresh Visuals'
-                          : 'Preview Scene Visuals'}
-                    </span>
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                    {Object.keys(beatTemplateOverrides).length > 0 && (
+                      <button
+                        type="button"
+                        disabled={planningVisualsBusy}
+                        onClick={() => void handleResetOverrides()}
+                        className="px-2.5 py-1.5 text-[11.5px] font-mono text-[#77766F] hover:text-[#242421] inline-flex items-center gap-1 whitespace-nowrap"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>Reset ({Object.keys(beatTemplateOverrides).length})</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPromptLibraryTargetBeat(0);
+                        setPromptLibraryOpen(true);
+                      }}
+                      className="px-3 py-1.5 bg-[#FFFFFF] border border-[#E4DDD0] hover:border-[#242421] text-[#242421] text-[12px] font-semibold rounded-sm inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                    >
+                      <BookOpen className="w-3.5 h-3.5 text-[#B69A65]" />
+                      <span>Prompt Library</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={planningVisualsBusy}
+                      onClick={() => void handlePlanVisuals()}
+                      className="px-3.5 py-1.5 bg-[#FFFFFF] border border-[#242421] text-[#242421] text-[12px] font-semibold rounded-sm inline-flex items-center gap-1.5 hover:bg-[#EFE8D8] whitespace-nowrap shrink-0"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 text-[#B69A65] ${planningVisualsBusy ? 'animate-spin' : ''}`} />
+                      <span>
+                        {planningVisualsBusy
+                          ? 'Analyzing Scenes...'
+                          : plannedVisuals
+                            ? 'Refresh Visuals'
+                            : 'Preview Scene Visuals'}
+                      </span>
+                    </button>
+                  </div>
                 </div>
 
                 {plannedVisuals && Array.isArray(plannedVisuals.beats) && (
                   <div className="space-y-3 pt-2 border-t border-[#E4DDD0]">
-                    <div className="flex items-center gap-3 bg-[#FFFFFF] border border-[#E4DDD0] p-2.5 rounded-sm">
-                      {plannedVisuals.presenterImageUrls?.[0] ? (
-                        <img
-                          src={plannedVisuals.presenterImageUrls?.[0]}
-                          alt={plannedVisuals.presenterLabel || 'Active Presenter'}
-                          className="w-11 h-11 object-cover rounded-sm border border-[#E4DDD0] shrink-0"
-                        />
-                      ) : (
-                        <div className="w-11 h-11 bg-[#242421] text-[#B69A65] flex items-center justify-center rounded-sm shrink-0">
-                          <Film className="w-5 h-5" />
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#FFFFFF] border border-[#E4DDD0] p-2.5 rounded-sm">
+                      <div className="flex items-center gap-3 min-w-0">
+                        {plannedVisuals.presenterImageUrls?.[0] ? (
+                          <img
+                            src={plannedVisuals.presenterImageUrls?.[0]}
+                            alt={plannedVisuals.presenterLabel || 'Active Presenter'}
+                            className="w-11 h-11 object-cover rounded-sm border border-[#E4DDD0] shrink-0"
+                          />
+                        ) : (
+                          <div className="w-11 h-11 bg-[#242421] text-[#B69A65] flex items-center justify-center rounded-sm shrink-0">
+                            <Film className="w-5 h-5" />
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <div className="text-[10.5px] font-mono uppercase tracking-[0.12em] text-[#77766F] inline-flex items-center gap-1">
+                            <Users className="w-3 h-3 text-[#B69A65]" />
+                            <span>Active Presenter Cast</span>
+                          </div>
+                          <div className="text-[13px] font-semibold text-[#242421] truncate">
+                            {plannedVisuals.presenterLabel || 'Dynamic Presenter Cast'}
+                          </div>
                         </div>
-                      )}
-                      <div className="min-w-0">
-                        <div className="text-[10.5px] font-mono uppercase tracking-[0.12em] text-[#77766F] inline-flex items-center gap-1">
-                          <Users className="w-3 h-3 text-[#B69A65]" />
-                          <span>Active Presenter Cast</span>
-                        </div>
-                        <div className="text-[13px] font-semibold text-[#242421] truncate">
-                          {plannedVisuals.presenterLabel || 'Dynamic Presenter Cast'}
-                        </div>
+                      </div>
+                      <div className="text-[11px] font-mono text-[#77766F] inline-flex items-center gap-1.5 shrink-0">
+                        <Sparkles className="w-3.5 h-3.5 text-[#B69A65]" />
+                        <span>
+                          {plannedVisuals.visionAnalysisUsed
+                            ? 'Gemini Vision · Portrait & Context Matched'
+                            : 'Prompt-Library · 6/6 Beats Matched'}
+                        </span>
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-                      {(plannedVisuals.beats || []).map((b) => (
-                        <div
-                          key={b.beatIndex}
-                          className="bg-[#FFFFFF] border border-[#E4DDD0] rounded-sm overflow-hidden flex flex-col"
-                        >
-                          <div className="h-20 bg-[#1A1917] relative overflow-hidden">
-                            {b.imageUrl ? (
-                              <img
-                                src={b.imageUrl}
-                                alt={b.headline}
-                                className="w-full h-full object-cover"
-                              />
-                            ) : (
-                              <div
-                                className="w-full h-full flex items-center justify-center text-[10px] font-mono text-[#F6F3EC]/80 px-2 text-center"
-                                style={{ backgroundColor: b.bgHex }}
-                              >
-                                {b.themeMood.replace('_', ' ').toUpperCase()}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                      {(plannedVisuals.beats || []).map((b) => {
+                        const isOverridden = Boolean(beatTemplateOverrides[b.beatIndex]);
+                        const mediaLabel =
+                          b.mediaKind === 'animated_clip'
+                            ? 'Animated Clip'
+                            : b.mediaKind === 'curated_frame'
+                              ? 'Curated Motion'
+                              : 'Motion Graphic';
+                        return (
+                          <div
+                            key={b.beatIndex}
+                            className="bg-[#FFFFFF] border border-[#E4DDD0] rounded-sm overflow-hidden flex flex-col justify-between"
+                          >
+                            <div>
+                              <div className="h-24 bg-[#1A1917] relative overflow-hidden">
+                                {b.imageUrl ? (
+                                  <img
+                                    src={b.imageUrl}
+                                    alt={b.headline}
+                                    className="w-full h-full object-cover"
+                                  />
+                                ) : (
+                                  <div
+                                    className="w-full h-full flex items-center justify-center text-[10px] font-mono text-[#F6F3EC]/80 px-2 text-center"
+                                    style={{ backgroundColor: b.bgHex }}
+                                  >
+                                    {b.themeMood.replace('_', ' ').toUpperCase()}
+                                  </div>
+                                )}
+                                <div className="absolute inset-x-0 bottom-0 px-2 py-1 bg-gradient-to-t from-[#1A1917]/90 to-transparent flex items-center justify-between text-[9.5px] font-mono text-[#F6F3EC] tabular-nums">
+                                  <span>
+                                    Beat {b.beatIndex + 1} · {Math.round(b.startPct * 100)}%–{Math.round(b.endPct * 100)}%
+                                  </span>
+                                  <span className="text-[#D8B36A]">{mediaLabel}</span>
+                                </div>
                               </div>
-                            )}
-                            <div className="absolute top-1.5 left-1.5 px-1.5 py-0.5 bg-[#1A1917]/85 text-[#F6F3EC] text-[9.5px] font-mono rounded-sm">
-                              {Math.round(b.startPct * 100)}%–{Math.round(b.endPct * 100)}%
+
+                              <div className="p-2.5 space-y-1.5">
+                                <div className="text-[10px] font-mono uppercase tracking-[0.06em] text-[#77766F] truncate">
+                                  {(b.cameraMotion || 'cinema_push').replace(/_/g, ' ')} ·{' '}
+                                  {(b.motionGraphicPreset || 'kinetic_waveform_banner').replace(/_/g, ' ')}
+                                  {isOverridden ? ' · Pinned' : ''}
+                                </div>
+                                <div className="text-[12px] font-semibold text-[#242421] leading-tight line-clamp-1">
+                                  {b.promptTemplateName || b.headline}
+                                </div>
+                                {b.calloutText && (
+                                  <div className="text-[10.5px] font-semibold text-[#8A5A1A] border-l-2 border-[#B69A65] pl-2 line-clamp-1">
+                                    {b.calloutText}
+                                  </div>
+                                )}
+                                {b.visionRationale && (
+                                  <div className="text-[10.5px] text-[#77766F] line-clamp-2 leading-snug">
+                                    {b.visionRationale}
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                          <div className="p-2 space-y-1">
-                            <div className="flex items-center justify-between gap-1">
-                              <span className="text-[10.5px] font-semibold text-[#242421] leading-tight line-clamp-1">
-                                {b.headline}
+
+                            <div className="px-2.5 py-1.5 border-t border-[#E4DDD0] bg-[#FAF8F4] flex items-center justify-between">
+                              <span className="text-[10px] font-mono text-[#77766F] truncate max-w-[115px]">
+                                {b.searchQuery}
                               </span>
-                              {b.isPunchline && (
-                                <span className="text-[9px] font-mono uppercase px-1 bg-[#E09F5A]/25 text-[#7A4A10] rounded-sm shrink-0">
-                                  Punch
-                                </span>
-                              )}
-                            </div>
-                            {b.calloutText && (
-                              <div className="text-[10px] font-semibold text-[#8A5A1A] bg-[#EFE8D8] px-1.5 py-0.5 rounded-sm line-clamp-1">
-                                {b.calloutText}
-                              </div>
-                            )}
-                            <div className="text-[10px] text-[#77766F] line-clamp-2 leading-snug">
-                              {b.spokenCue}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPromptLibraryTargetBeat(b.beatIndex);
+                                  setPromptLibraryOpen(true);
+                                }}
+                                className="text-[10.5px] font-semibold text-[#242421] hover:text-[#B69A65] inline-flex items-center gap-1 whitespace-nowrap shrink-0"
+                              >
+                                <SlidersHorizontal className="w-3 h-3 text-[#B69A65]" />
+                                <span>Change Preset</span>
+                              </button>
                             </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -1496,6 +1615,15 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
           </div>
         </div>
       )}
+      {/* Browsable Prompt-Library Modal for Dynamic Motion-Graphic Preset Overrides */}
+      <PromptLibraryModal
+        open={promptLibraryOpen}
+        targetBeatIndex={promptLibraryTargetBeat}
+        currentBeatTemplateIds={(plannedVisuals?.beats || []).map((b) => beatTemplateOverrides[b.beatIndex] || b.promptTemplateId)}
+        onChangeTargetBeat={setPromptLibraryTargetBeat}
+        onSelectTemplate={(beatIdx, tplId) => void handleSelectPromptTemplate(beatIdx, tplId)}
+        onClose={() => setPromptLibraryOpen(false)}
+      />
     </div>
   );
 };

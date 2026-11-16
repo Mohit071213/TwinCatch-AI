@@ -53,6 +53,7 @@ import {
   resetLiveWorkspace,
   writeWorkspace,
 } from './server/store.ts';
+import { VISUAL_PROMPT_LIBRARY } from './src/lib/promptLibrary.ts';
 import { SCENE_CACHE_DIR, planAndFetchScriptVisuals } from './server/visualDirector.ts';
 
 function resolveMode(req: express.Request): WorkspaceMode {
@@ -1059,7 +1060,12 @@ async function startServer() {
     }
   });
 
-  // Plan script-matched backgrounds & diverse presenter visuals ($0.00 live fetch + Gemini cue extraction)
+  // Browsable structured Prompt-Library catalog for Video Studio scene selection
+  app.get('/api/studio/prompt-library', (_req, res) => {
+    res.json({ templates: VISUAL_PROMPT_LIBRARY });
+  });
+
+  // Plan script-matched backgrounds, prompt-library presets & diverse presenter visuals
   app.post('/api/studio/plan-visuals', async (req, res) => {
     try {
       const mode = resolveMode(req);
@@ -1069,22 +1075,40 @@ async function startServer() {
         scriptText,
         language,
         format,
+        genre,
+        writingStyle,
+        emotion,
         backgroundStyle,
         presenterMode,
         productionStyle,
         voiceIdentity,
         portraitAssetId,
+        beatTemplateOverrides,
       } = req.body as {
         title?: string;
         scriptText?: string;
         language?: TwinLanguage;
         format?: VideoFormatType;
+        genre?: ScriptGenre;
+        writingStyle?: WritingStyleMode;
+        emotion?: string;
         backgroundStyle?: string;
         presenterMode?: PresenterVisualMode;
         productionStyle?: ProductionStyle;
         voiceIdentity?: string;
         portraitAssetId?: string;
+        beatTemplateOverrides?: Record<string, string>;
       };
+
+      const normalizedOverrides: Record<number, string> = {};
+      if (beatTemplateOverrides && typeof beatTemplateOverrides === 'object') {
+        for (const [k, v] of Object.entries(beatTemplateOverrides)) {
+          const num = Number(k);
+          if (Number.isInteger(num) && num >= 0 && num < 6 && typeof v === 'string' && v.trim()) {
+            normalizedOverrides[num] = v.trim();
+          }
+        }
+      }
 
       const imageAssets = state.twin.faceAssets
         .filter((f) => !/\.(mp4|mov|webm)$/i.test(f.url))
@@ -1099,6 +1123,9 @@ async function startServer() {
         scriptText: String(scriptText || title || ''),
         language: language || state.twin.personality.primaryLanguage,
         format,
+        genre,
+        writingStyle,
+        emotion,
         backgroundStyle: backgroundStyle || 'Auto-Match Script Theme',
         presenterMode: presenterMode || 'auto_match',
         productionStyle: productionStyle || 'auto_genre',
@@ -1106,6 +1133,7 @@ async function startServer() {
         mode,
         twinFaceImageAssets: imageAssets,
         preferredPortraitId: portraitAssetId,
+        beatTemplateOverrides: normalizedOverrides,
       });
 
       res.json({
@@ -1114,6 +1142,7 @@ async function startServer() {
         presenterLabel: planned.presenter.presenterLabel,
         presenterImageUrls: planned.presenter.presenterImageUrls,
         productionStyleResolved: planned.productionStyleResolved,
+        visionAnalysisUsed: planned.visionAnalysisUsed,
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Visual planning failed.' });
@@ -1197,7 +1226,7 @@ async function startServer() {
         });
       }
 
-      // Plan script-matched backgrounds, genre production style & diverse presenter
+      // Plan script-matched backgrounds, prompt-library presets & diverse presenter via Gemini Vision
       const twinFaceImgAssets = state.twin.faceAssets
         .filter((f) => !/\.(mp4|mov|webm)$/i.test(f.url))
         .map((f) => ({
@@ -1206,11 +1235,25 @@ async function startServer() {
           diskPath: resolveLocalAssetPath(f.url) || undefined,
         }));
 
+      const rawOverrides = (req.body as any).beatTemplateOverrides;
+      const normalizedRenderOverrides: Record<number, string> = {};
+      if (rawOverrides && typeof rawOverrides === 'object') {
+        for (const [k, v] of Object.entries(rawOverrides)) {
+          const num = Number(k);
+          if (Number.isInteger(num) && num >= 0 && num < 6 && typeof v === 'string' && v.trim()) {
+            normalizedRenderOverrides[num] = v.trim();
+          }
+        }
+      }
+
       const plannedVisuals = await planAndFetchScriptVisuals({
         title: title || 'TwinForge Studio Production',
         scriptText: scriptText || title || '',
         language: language || state.twin.personality.primaryLanguage,
         format: format || 'Talking-Head',
+        genre: (req.body as any).genre,
+        writingStyle: (req.body as any).writingStyle,
+        emotion,
         backgroundStyle: backgroundStyle || 'Auto-Match Script Theme',
         presenterMode: (req.body as any).presenterMode || 'auto_match',
         productionStyle: (req.body as any).productionStyle || 'auto_genre',
@@ -1218,6 +1261,7 @@ async function startServer() {
         mode,
         twinFaceImageAssets: twinFaceImgAssets,
         preferredPortraitId: portraitAssetId,
+        beatTemplateOverrides: normalizedRenderOverrides,
       });
 
       const chosenAsset =
@@ -1376,6 +1420,9 @@ async function startServer() {
             calloutText: b.calloutText,
             subBadge: b.subBadge,
             isPunchline: b.isPunchline,
+            motionGraphicPreset: b.motionGraphicPreset,
+            cameraMotion: b.cameraMotion,
+            colorAccent: b.accentHex,
             startPct: b.startPct,
             endPct: b.endPct,
           })),
@@ -1394,12 +1441,13 @@ async function startServer() {
           outputThumbPath: outThumbPath,
         });
         durationSec = rendered.durationSec;
+        const visionTag = plannedVisuals.visionAnalysisUsed ? ' · Gemini Vision Prompt Library' : ' · Prompt Library';
         provenanceNote =
           qualityTier === 'local_free'
             ? voiceProvider === 'free_hindi_neural'
-              ? `Free Natural Hindi Neural (${voiceIdentity || 'Andrew'}) · ${plannedVisuals.productionStyleResolved.replace('_', ' ')} · ${plannedVisuals.presenter.presenterLabel} ($0.00)`
-              : `Free 6-Shot ${plannedVisuals.productionStyleResolved.replace('_', ' ')} Director · ${plannedVisuals.presenter.presenterLabel} ($0.00)`
-            : `Balanced Mode · ${plannedVisuals.productionStyleResolved.replace('_', ' ')} · ${plannedVisuals.presenter.presenterLabel}`;
+              ? `Free Natural Hindi Neural (${voiceIdentity || 'Andrew'}) · ${plannedVisuals.productionStyleResolved.replace('_', ' ')}${visionTag} ($0.00)`
+              : `Free 6-Shot ${plannedVisuals.productionStyleResolved.replace('_', ' ')} Director${visionTag} ($0.00)`
+            : `Balanced Mode · ${plannedVisuals.productionStyleResolved.replace('_', ' ')}${visionTag}`;
       }
 
       const processingMs = Date.now() - startMs;

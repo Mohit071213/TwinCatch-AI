@@ -1,4 +1,6 @@
 import type {
+  CameraMotionType,
+  MotionGraphicPreset,
   PresenterVisualMode,
   ProductionStyle,
   SceneVisualBeat,
@@ -244,6 +246,250 @@ function drawThematicAtmosphere(
           : `rgba(216, 179, 106, ${0.08 + (i % 3) * 0.03})`;
     ctx.fill();
   }
+  ctx.restore();
+}
+
+function resolveBeatCameraMotion(
+  cameraMotion: CameraMotionType | undefined,
+  localProgress: number,
+  t: number,
+  sceneIdx: number,
+  baseZoom = 1.05
+): { zoom: number; panX: number; panY: number; rot: number } {
+  switch (cameraMotion) {
+    case 'punch_zoom': {
+      const kick = localProgress < 0.18 ? 0.16 * Math.sin((localProgress / 0.18) * Math.PI * 0.6) : 0.06;
+      return {
+        zoom: baseZoom + 0.06 + kick + localProgress * 0.08,
+        panX: Math.sin(t * 2.1) * 5,
+        panY: Math.cos(t * 1.9) * 3,
+        rot: (localProgress < 0.15 ? 0.015 : 0.004) * Math.sin(t * 5),
+      };
+    }
+    case 'kinetic_pan': {
+      const dir = sceneIdx % 2 === 0 ? 1 : -1;
+      return {
+        zoom: baseZoom + 0.12 + localProgress * 0.06,
+        panX: dir * (-34 + localProgress * 68),
+        panY: Math.sin(t * 1.4) * 4,
+        rot: 0,
+      };
+    }
+    case 'split_reveal': {
+      const dir = sceneIdx % 2 === 0 ? -1 : 1;
+      return {
+        zoom: baseZoom + 0.1,
+        panX: dir * (-24 + localProgress * 48),
+        panY: -8 + localProgress * 16,
+        rot: 0,
+      };
+    }
+    case 'orbit_drift': {
+      return {
+        zoom: baseZoom + 0.11 + 0.03 * Math.sin(t * 1.1),
+        panX: Math.cos(t * 0.95) * 20,
+        panY: Math.sin(t * 0.95) * 14,
+        rot: 0.012 * Math.sin(t * 0.7),
+      };
+    }
+    case 'cinema_push':
+    default:
+      return {
+        zoom: baseZoom + 0.03 + localProgress * 0.13,
+        panX: (-10 + localProgress * 20) * (sceneIdx % 2 === 0 ? 1 : -1),
+        panY: Math.sin(t * 0.8) * 3,
+        rot: 0,
+      };
+  }
+}
+
+function drawBeatMotionGraphicLayer(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  stageH: number,
+  preset: MotionGraphicPreset | undefined,
+  localProgress: number,
+  t: number,
+  speechEnergy: number,
+  accentHex: string
+) {
+  if (!preset) return;
+  ctx.save();
+
+  if (preset === 'comic_reaction_burst') {
+    const cx = w * 0.5;
+    const cy = stageH * 0.44;
+    const rays = 16;
+    const innerR = Math.min(w, stageH) * 0.27;
+    const outerR = Math.min(w, stageH) * (0.44 + speechEnergy * 0.08);
+    ctx.strokeStyle = accentHex;
+    ctx.globalAlpha = 0.24 + speechEnergy * 0.2;
+    ctx.lineWidth = 2.5;
+    for (let i = 0; i < rays; i++) {
+      const ang = (i / rays) * Math.PI * 2 + t * 0.45;
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(ang) * innerR, cy + Math.sin(ang) * innerR);
+      ctx.lineTo(cx + Math.cos(ang) * outerR, cy + Math.sin(ang) * outerR);
+      ctx.stroke();
+    }
+  } else if (preset === 'chat_thread_popup') {
+    // Live typing indicator bar in upper right stage
+    const bx = w - 156;
+    const by = 68;
+    ctx.globalAlpha = 0.82;
+    ctx.fillStyle = 'rgba(20, 19, 17, 0.76)';
+    drawRoundedRectPath(ctx, bx, by, 130, 32, 16);
+    ctx.fill();
+    ctx.strokeStyle = accentHex;
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+    for (let d = 0; d < 3; d++) {
+      const bounce = Math.sin(t * 7 + d * 1.1) * 3.5;
+      ctx.beginPath();
+      ctx.arc(bx + 24 + d * 14, by + 16 + bounce, 3.2, 0, Math.PI * 2);
+      ctx.fillStyle = accentHex;
+      ctx.fill();
+    }
+    ctx.font = '700 9.5px monospace';
+    ctx.fillStyle = '#F6F3EC';
+    ctx.fillText('TYPING...', bx + 68, by + 19);
+  } else if (preset === 'orbital_physics_sim') {
+    const cx = w * 0.78;
+    const cy = stageH * 0.28;
+    const rx = Math.min(w, stageH) * 0.16;
+    const ry = rx * 0.42;
+    ctx.translate(cx, cy);
+    ctx.rotate(-0.35);
+    ctx.strokeStyle = accentHex;
+    ctx.globalAlpha = 0.42;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(0, 0, rx * 0.62, ry * 0.62, 0.65, 0, Math.PI * 2);
+    ctx.stroke();
+    // Moving planet & core node
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = accentHex;
+    ctx.beginPath();
+    ctx.arc(0, 0, 6, 0, Math.PI * 2);
+    ctx.fill();
+    const ox = Math.cos(t * 1.8) * rx;
+    const oy = Math.sin(t * 1.8) * ry;
+    ctx.fillStyle = '#F6F3EC';
+    ctx.beginPath();
+    ctx.arc(ox, oy, 4.5, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (preset === 'neural_network_pulse') {
+    const nodes = [
+      { x: w * 0.14, y: stageH * 0.22 },
+      { x: w * 0.28, y: stageH * 0.15 },
+      { x: w * 0.24, y: stageH * 0.31 },
+      { x: w * 0.82, y: stageH * 0.2 },
+      { x: w * 0.9, y: stageH * 0.31 },
+    ];
+    ctx.strokeStyle = accentHex;
+    ctx.lineWidth = 1.3;
+    nodes.forEach((a, i) => {
+      nodes.slice(i + 1).forEach((b) => {
+        if (Math.hypot(a.x - b.x, a.y - b.y) < w * 0.34) {
+          ctx.globalAlpha = 0.25;
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.stroke();
+          const pulsePos = (t * 0.65 + i * 0.2) % 1;
+          ctx.globalAlpha = 0.72;
+          ctx.fillStyle = accentHex;
+          ctx.beginPath();
+          ctx.arc(a.x + (b.x - a.x) * pulsePos, a.y + (b.y - a.y) * pulsePos, 2.6, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      });
+    });
+    nodes.forEach((n, i) => {
+      ctx.globalAlpha = 0.6 + 0.25 * Math.sin(t * 3 + i);
+      ctx.fillStyle = '#F6F3EC';
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  } else if (preset === 'compounding_curve_chart') {
+    const gx = Math.round(w * 0.08);
+    const gy = Math.round(stageH * 0.17);
+    const gw = Math.round(w * 0.34);
+    const gh = 78;
+    ctx.fillStyle = 'rgba(15, 22, 18, 0.56)';
+    drawRoundedRectPath(ctx, gx - 10, gy - 10, gw + 20, gh + 20, 6);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(gx, gy + gh);
+    ctx.lineTo(gx + gw, gy + gh);
+    ctx.moveTo(gx, gy);
+    ctx.lineTo(gx, gy + gh);
+    ctx.stroke();
+
+    const drawFrac = Math.min(1, 0.15 + localProgress * 0.95);
+    ctx.strokeStyle = accentHex;
+    ctx.lineWidth = 2.8;
+    ctx.beginPath();
+    const steps = 20;
+    let tipX = gx;
+    let tipY = gy + gh;
+    for (let s = 0; s <= steps; s++) {
+      const f = (s / steps) * drawFrac;
+      const px = gx + f * gw;
+      const py = gy + gh - Math.pow(f, 2.1) * (gh - 8);
+      if (s === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+      tipX = px;
+      tipY = py;
+    }
+    ctx.stroke();
+    ctx.fillStyle = '#F6F3EC';
+    ctx.beginPath();
+    ctx.arc(tipX, tipY, 4 + speechEnergy * 2, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (preset === 'myth_reality_divider') {
+    const sweep = Math.min(1, localProgress * 2.2);
+    ctx.globalAlpha = 0.28;
+    ctx.strokeStyle = accentHex;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(w * 0.52, 0);
+    ctx.lineTo(w * 0.44, stageH * sweep);
+    ctx.stroke();
+  } else if (preset === 'cinema_spotlight_sweep') {
+    const beamX = w * (0.2 + 0.6 * (0.5 + 0.5 * Math.sin(t * 0.7)));
+    const beamGrad = ctx.createLinearGradient(beamX, 0, w * 0.5, stageH);
+    beamGrad.addColorStop(0, 'rgba(216, 179, 106, 0.16)');
+    beamGrad.addColorStop(1, 'rgba(216, 179, 106, 0)');
+    ctx.fillStyle = beamGrad;
+    ctx.beginPath();
+    ctx.moveTo(beamX - 45, 0);
+    ctx.lineTo(beamX + 45, 0);
+    ctx.lineTo(w * 0.85, stageH);
+    ctx.lineTo(w * 0.15, stageH);
+    ctx.closePath();
+    ctx.fill();
+  } else if (preset === 'kinetic_waveform_banner') {
+    ctx.strokeStyle = accentHex;
+    ctx.globalAlpha = 0.45;
+    ctx.lineWidth = 2;
+    const baseY = stageH * 0.16;
+    ctx.beginPath();
+    for (let x = 24; x <= w - 24; x += 12) {
+      const amp = (8 + speechEnergy * 18) * Math.sin(x * 0.03 + t * 5.2);
+      const y = baseY + amp;
+      if (x === 24) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
   ctx.restore();
 }
 
@@ -590,6 +836,15 @@ export async function renderCanvasMotionVideo(params: CanvasAnimationParams): Pr
       const isCinema = resolvedStyle === 'story_cinema';
       const isPunchlineBeat = Boolean(activeBeat?.isPunchline);
 
+      // Camera motion choreography driven by selected Prompt-Library cameraMotion + beat timing
+      const beatCam = resolveBeatCameraMotion(
+        activeBeat?.cameraMotion,
+        localProgress,
+        t,
+        sceneIdx,
+        baseZoom
+      );
+
       // Dynamic kinetic camera impulse for Comedy vs calm flow for Cinema
       const comedyPunchKick =
         isComedy && localProgress < 0.16
@@ -605,12 +860,11 @@ export async function renderCanvasMotionVideo(params: CanvasAnimationParams): Pr
       const swayY = 5 * Math.cos(t * (isComedy ? 2.3 : 1.6)) - speechEnergy * 4 + shakeY;
       const tilt =
         (isComedy ? 0.022 : 0.01) * Math.sin(t * (isComedy ? 2.2 : 1.1)) +
-        speechEnergy * (isComedy ? 0.014 : 0.006) * Math.sin(t * 7.5);
+        speechEnergy * (isComedy ? 0.014 : 0.006) * Math.sin(t * 7.5) +
+        beatCam.rot;
 
       if (isFaceless || !primaryPresenter) {
         if (beatImg) {
-          const panDir = sceneIdx % 2 === 0 ? 1 : -1;
-          const bgZoom = 1.05 + localProgress * (isComedy ? 0.2 : 0.13) + comedyPunchKick;
           drawCoverBox(
             ctx,
             beatImg,
@@ -618,10 +872,10 @@ export async function renderCanvasMotionVideo(params: CanvasAnimationParams): Pr
             0,
             w,
             stageH + 10,
-            bgZoom,
-            panDir * (-24 + localProgress * 48) + shakeX,
-            swayY * 0.4,
-            isComedy && isPunchlineBeat ? tilt * 0.6 : 0,
+            beatCam.zoom + comedyPunchKick,
+            beatCam.panX + shakeX,
+            beatCam.panY + swayY * 0.4,
+            isComedy && isPunchlineBeat ? tilt * 0.6 : beatCam.rot,
             0.94
           );
         }
@@ -928,6 +1182,18 @@ export async function renderCanvasMotionVideo(params: CanvasAnimationParams): Pr
       grad.addColorStop(1, 'rgba(15,14,12,0.34)');
       ctx.fillStyle = grad;
       ctx.fillRect(0, 0, w, stageH);
+
+      // Procedural Motion-Graphic Engine layer keyed from Prompt-Library preset
+      drawBeatMotionGraphicLayer(
+        ctx,
+        w,
+        stageH,
+        activeBeat?.motionGraphicPreset,
+        localProgress,
+        t,
+        speechEnergy,
+        accentHex
+      );
 
       // Relatable Animated Motion-Graphic Card illustrating the current beat
       drawRelatableOverlayCard(ctx, w, stageH, activeBeat, localProgress, resolvedStyle, accentHex, t);

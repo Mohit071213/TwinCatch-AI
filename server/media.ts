@@ -417,9 +417,13 @@ export interface FfmpegRenderOptions {
   presenterMode?: 'auto_match' | 'faceless_broll' | 'twin_owner' | 'cast_ananya' | 'cast_meera' | 'cast_kabir';
   productionStyle?: ProductionStyle;
   beatOverlays?: Array<{
+    headline?: string;
     calloutText?: string;
     subBadge?: string;
     isPunchline?: boolean;
+    motionGraphicPreset?: string;
+    cameraMotion?: string;
+    colorAccent?: string;
     startPct: number;
     endPct: number;
   }>;
@@ -523,7 +527,7 @@ export async function renderTwinVideoFFmpeg(opts: FfmpegRenderOptions): Promise<
     );
     audioInputIdx = 1;
   } else {
-    // 6-shot dynamic genre choreography across >=30s with style-matched cuts & punch zooms
+    // 6-shot dynamic genre choreography across >=30s with style-matched cuts, animated GIF clips & camera motions
     const style = opts.productionStyle || 'creator_reel';
     const shotCount = 6;
     const xfadeDur = style === 'comedy_skit' ? 0.22 : style === 'story_cinema' ? 0.52 : 0.36;
@@ -554,7 +558,12 @@ export async function renderTwinVideoFFmpeg(opts: FfmpegRenderOptions): Promise<
     }
 
     for (const imgPath of shotImages) {
-      args.push('-loop', '1', '-t', String(rawShotDur + 0.2), '-framerate', String(fps), '-i', imgPath);
+      const isGif = imgPath.toLowerCase().endsWith('.gif');
+      if (isGif) {
+        args.push('-ignore_loop', '0', '-t', String((rawShotDur + 0.2).toFixed(2)), '-i', imgPath);
+      } else {
+        args.push('-loop', '1', '-t', String((rawShotDur + 0.2).toFixed(2)), '-framerate', String(fps), '-i', imgPath);
+      }
     }
     audioInputIdx = shotCount;
 
@@ -566,19 +575,42 @@ export async function renderTwinVideoFFmpeg(opts: FfmpegRenderOptions): Promise<
           ? 'eq=contrast=1.09:saturation=0.90:brightness=-0.02'
           : 'eq=contrast=1.05:saturation=1.04';
 
-    const shotMoves = [
-      `zoompan=z='if(eq(on,1),${framingStartZoom},min(zoom+${zoomRate},${(framingStartZoom + 0.26).toFixed(2)}))':x='iw/2-(iw/zoom/2)':y='ih/2.5-(ih/zoom/2.5)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`,
-      `zoompan=z='${(framingStartZoom + 0.14).toFixed(2)}':x='(iw-iw/zoom)*(on/${shotFrames})':y='ih/2.35-(ih/zoom/2.35)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`,
-      `zoompan=z='if(eq(on,1),${(framingStartZoom + 0.25).toFixed(2)},max(zoom-${zoomRate},${framingStartZoom.toFixed(2)}))':x='iw/2-(iw/zoom/2)':y='ih/2.2-(ih/zoom/2.2)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`,
-      `zoompan=z='${(framingStartZoom + 0.12).toFixed(2)}':x='(iw-iw/zoom)*(1-on/${shotFrames})':y='ih/2.4-(ih/zoom/2.4)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`,
-      `zoompan=z='if(eq(on,1),${(framingStartZoom + 0.04).toFixed(2)},min(zoom+${(zoomRate * 1.1).toFixed(4)},${(framingStartZoom + 0.24).toFixed(2)}))':x='iw/2-(iw/zoom/2)':y='ih/2.45-(ih/zoom/2.45)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`,
-      `zoompan=z='if(eq(on,1),${(framingStartZoom + 0.22).toFixed(2)},max(zoom-0.0018,${framingStartZoom.toFixed(2)}))':x='(iw-iw/zoom)*(on/${shotFrames})':y='ih/2.3-(ih/zoom/2.3)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`,
-    ];
+    const buildStaticMove = (cam: string | undefined, idx: number) => {
+      if (cam === 'punch_zoom') {
+        return `zoompan=z='if(eq(on,1),${framingStartZoom},min(zoom+${(zoomRate * 1.25).toFixed(4)},${(framingStartZoom + 0.28).toFixed(2)}))':x='iw/2-(iw/zoom/2)':y='ih/2.45-(ih/zoom/2.45)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`;
+      }
+      if (cam === 'kinetic_pan') {
+        return `zoompan=z='${(framingStartZoom + 0.14).toFixed(2)}':x='(iw-iw/zoom)*(on/${shotFrames})':y='ih/2.35-(ih/zoom/2.35)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`;
+      }
+      if (cam === 'split_reveal') {
+        return `zoompan=z='${(framingStartZoom + 0.12).toFixed(2)}':x='(iw-iw/zoom)*(1-on/${shotFrames})':y='ih/2.4-(ih/zoom/2.4)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`;
+      }
+      if (cam === 'orbit_drift') {
+        return `zoompan=z='if(eq(on,1),${(framingStartZoom + 0.22).toFixed(2)},max(zoom-${zoomRate},${framingStartZoom.toFixed(2)}))':x='iw/2-(iw/zoom/2)':y='ih/2.25-(ih/zoom/2.25)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`;
+      }
+      if (cam === 'cinema_push') {
+        return `zoompan=z='if(eq(on,1),${framingStartZoom},min(zoom+${(zoomRate * 0.8).toFixed(4)},${(framingStartZoom + 0.2).toFixed(2)}))':x='iw/2-(iw/zoom/2)':y='ih/2.4-(ih/zoom/2.4)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`;
+      }
+      return idx % 2 === 0
+        ? `zoompan=z='if(eq(on,1),${framingStartZoom},min(zoom+${zoomRate},${(framingStartZoom + 0.25).toFixed(2)}))':x='iw/2-(iw/zoom/2)':y='ih/2.4-(ih/zoom/2.4)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`
+        : `zoompan=z='${(framingStartZoom + 0.14).toFixed(2)}':x='(iw-iw/zoom)*(on/${shotFrames})':y='ih/2.35-(ih/zoom/2.35)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`;
+    };
 
     for (let i = 0; i < shotCount; i++) {
-      filters.push(
-        `[${i}:v]scale=${w * 2}:${h * 2}:force_original_aspect_ratio=increase,crop=${w * 2}:${h * 2},${shotMoves[i]},settb=AVTB,setsar=1,format=yuv420p,${eqFilter}[v${i}]`
-      );
+      const imgPath = shotImages[i] || '';
+      const isGif = imgPath.toLowerCase().endsWith('.gif');
+      const beatCam = opts.beatOverlays?.[i]?.cameraMotion;
+      if (isGif) {
+        // Animated GIFs already contain multi-frame motion; normalize FPS/size directly without zoompan frame multiplication
+        filters.push(
+          `[${i}:v]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},fps=${fps},trim=duration=${rawShotDur},setpts=PTS-STARTPTS,settb=AVTB,setsar=1,format=yuv420p,${eqFilter}[v${i}]`
+        );
+      } else {
+        const moveFilter = buildStaticMove(beatCam, i);
+        filters.push(
+          `[${i}:v]scale=${w * 2}:${h * 2}:force_original_aspect_ratio=increase,crop=${w * 2}:${h * 2},${moveFilter},settb=AVTB,setsar=1,format=yuv420p,${eqFilter}[v${i}]`
+        );
+      }
     }
 
     const transitions =
@@ -666,7 +698,7 @@ export async function renderTwinVideoFFmpeg(opts: FfmpegRenderOptions): Promise<
     }
 
     // Genre-specific on-screen visual punchline / fact callout overlays per beat
-    const callouts = (opts.beatOverlays || []).filter((b) => b.calloutText).slice(0, 6);
+    const callouts = (opts.beatOverlays || []).filter((b) => b.calloutText || b.headline).slice(0, 6);
     if (callouts.length > 0) {
       const style = opts.productionStyle || 'creator_reel';
       const boxBg =
@@ -682,12 +714,20 @@ export async function renderTwinVideoFFmpeg(opts: FfmpegRenderOptions): Promise<
       callouts.forEach((b, bIdx) => {
         const sTime = Number((b.startPct * targetDuration).toFixed(2));
         const eTime = Number((b.endPct * targetDuration).toFixed(2));
-        const txt = escapeDrawtext((b.calloutText || '').slice(0, 34));
+        const txt = escapeDrawtext((b.calloutText || b.headline || '').slice(0, 34));
         const nextTag = `co_${bIdx}`;
         filters.push(
           `[${lastTag}]drawtext=text='${txt}':x=(w-text_w)/2:y=${yCallout}:fontsize=${calloutFont}:fontcolor=${boxFg}:box=1:boxcolor=${boxBg}:boxborderw=12:enable='between(t,${sTime},${eTime})'[${nextTag}]`
         );
         lastTag = nextTag;
+        if (b.subBadge) {
+          const badgeTxt = escapeDrawtext(b.subBadge.slice(0, 24).toUpperCase());
+          const badgeTag = `sb_${bIdx}`;
+          filters.push(
+            `[${lastTag}]drawtext=text='${badgeTxt}':x=${Math.max(28, w - 260)}:y=26:fontsize=${Math.max(12, Math.round(w * 0.017))}:fontcolor=0x1A1917:box=1:boxcolor=0xB69A65@0.94:boxborderw=7:enable='between(t,${sTime},${eTime})'[${badgeTag}]`
+          );
+          lastTag = badgeTag;
+        }
       });
     } else {
       const b1End = Number((targetDuration * 0.3).toFixed(2));

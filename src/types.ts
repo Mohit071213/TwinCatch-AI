@@ -301,6 +301,46 @@ export type VisualCardType =
   | 'comic_bubble'
   | 'kinetic_quote';
 
+export type PromptLibraryCategory =
+  | 'Comedy & Skit'
+  | 'Science & Explainer'
+  | 'Finance & Business'
+  | 'Story & Cinema'
+  | 'Creator Hooks';
+
+export type CameraMotionType =
+  | 'punch_zoom'
+  | 'kinetic_pan'
+  | 'split_reveal'
+  | 'orbit_drift'
+  | 'cinema_push';
+
+export type MotionGraphicPreset =
+  | 'comic_reaction_burst'
+  | 'chat_thread_popup'
+  | 'orbital_physics_sim'
+  | 'neural_network_pulse'
+  | 'compounding_curve_chart'
+  | 'myth_reality_divider'
+  | 'cinema_spotlight_sweep'
+  | 'kinetic_waveform_banner';
+
+export interface VisualPromptTemplate {
+  id: string;
+  name: string;
+  category: PromptLibraryCategory;
+  productionStyle: Exclude<ProductionStyle, 'auto_genre'>;
+  themeMood: SceneVisualBeat['themeMood'];
+  motionGraphicPreset: MotionGraphicPreset;
+  cameraMotion: CameraMotionType;
+  visualCardType: VisualCardType;
+  colorAccent: string;
+  clipKeywords: string[];
+  directorPrompt: string;
+  sampleCallout: string;
+  sampleSubBadge: string;
+}
+
 export interface SceneVisualBeat {
   beatIndex: number;
   startPct: number;
@@ -324,6 +364,12 @@ export interface SceneVisualBeat {
   calloutText?: string;
   subBadge?: string;
   isPunchline?: boolean;
+  promptTemplateId?: string;
+  promptTemplateName?: string;
+  motionGraphicPreset?: MotionGraphicPreset;
+  cameraMotion?: CameraMotionType;
+  visionRationale?: string;
+  mediaKind?: 'animated_clip' | 'motion_graphic' | 'curated_frame';
 }
 
 export interface VideoRenderJob {

@@ -6,11 +6,18 @@ import type {
   PresenterVisualMode,
   ProductionStyle,
   SceneVisualBeat,
+  ScriptGenre,
   TwinLanguage,
   VideoFormatType,
-  VisualCardType,
+  VisualPromptTemplate,
   WorkspaceMode,
+  WritingStyleMode,
 } from '../src/types.ts';
+import {
+  VISUAL_PROMPT_LIBRARY,
+  getPromptTemplateById,
+  selectFallbackTemplatesForScript,
+} from '../src/lib/promptLibrary.ts';
 
 export const SCENE_CACHE_DIR = path.resolve(process.cwd(), 'data', 'scene-cache');
 const PUBLIC_CAST_DIR = path.resolve(process.cwd(), 'public', 'cast');
@@ -28,14 +35,6 @@ const MOOD_PALETTES: Record<ThemeMood, { bgHex: string; accentHex: string }> = {
   nature_earth: { bgHex: '#16231B', accentHex: '#A7BA78' },
   studio_editorial: { bgHex: '#1A1917', accentHex: '#B69A65' },
 };
-
-const VALID_CARD_TYPES: VisualCardType[] = [
-  'reaction_chat',
-  'stat_callout',
-  'comparison_split',
-  'comic_bubble',
-  'kinetic_quote',
-];
 
 const CUT_RANGES: Array<[number, number]> = [
   [0, 0.17],
@@ -70,6 +69,32 @@ function getGeminiClient(): GoogleGenAI | null {
   });
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, label = 'Timeout'): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(label)), ms);
+    promise.then(
+      (val) => {
+        clearTimeout(timer);
+        resolve(val);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
+interface PlanVisualsResult {
+  beats: SceneVisualBeat[];
+  beatDiskPaths: Array<string | undefined>;
+  presenter: ResolvedPresenterInfo;
+  productionStyleResolved: ResolvedProductionStyle;
+  visionAnalysisUsed: boolean;
+}
+
+const RECENT_PLANS_CACHE = new Map<string, { expiresAt: number; value: PlanVisualsResult }>();
+
 function splitScriptInto6Cues(title: string, scriptText: string): string[] {
   const full = (scriptText || title || 'Creative story insight').replace(/\s+/g, ' ').trim();
   const words = full.split(' ').filter(Boolean);
@@ -86,6 +111,8 @@ function splitScriptInto6Cues(title: string, scriptText: string): string[] {
 export function resolveProductionStyle(params: {
   productionStyle?: ProductionStyle;
   format?: VideoFormatType | string;
+  genre?: ScriptGenre | string;
+  writingStyle?: WritingStyleMode | string;
   backgroundStyle?: string;
   title?: string;
   scriptText?: string;
@@ -101,6 +128,9 @@ export function resolveProductionStyle(params: {
 
   const text = `${params.title || ''} ${params.scriptText || ''}`.toLowerCase();
   const hasComedySignals =
+    params.genre === 'Comedy' ||
+    params.writingStyle === 'Observational Comedy' ||
+    params.writingStyle === 'Relatable Skit / Dialogue' ||
     /\b(comedy|funny|laugh|skit|meme|joke|roast|boss|manager|sync|meeting|monday|coffee|traffic|relatable|friend|prank)\b|हंसी|कॉमेडी|बॉस|ऑफिस|मज़ाक|कहानी नहीं|दोस्त/.test(
       text
     );
@@ -114,6 +144,15 @@ export function resolveProductionStyle(params: {
   }
 
   const hasExplainerSignals =
+    params.genre === 'Science' ||
+    params.genre === 'Knowledge' ||
+    params.genre === 'Myth Busting' ||
+    params.genre === 'Psychology' ||
+    params.genre === 'Tech & AI' ||
+    params.genre === 'Business & Finance' ||
+    params.writingStyle === 'Mind-Blowing Science' ||
+    params.writingStyle === 'Deep Knowledge Explainer' ||
+    params.writingStyle === 'Rapid Myth-Buster' ||
     /\b(space|science|physics|brain|neuron|quantum|psychology|trick|myth|reality|secret|finance|money|invest|study|research|how|why)\b|विज्ञान|दिमाग|पैसा|कैसे|रिसर्च|सच/.test(
       text
     );
@@ -128,6 +167,9 @@ export function resolveProductionStyle(params: {
 
   if (
     params.format === 'Storytelling' ||
+    params.genre === 'Storytelling' ||
+    params.genre === 'History & Facts' ||
+    params.writingStyle === 'Cinematic Storytelling' ||
     /\b(history|ancient|empire|story|journey|night|memory)\b|इतिहास|कहानी|सफर/.test(text)
   ) {
     return 'story_cinema';
@@ -136,9 +178,18 @@ export function resolveProductionStyle(params: {
   return 'creator_reel';
 }
 
-function inferMoodFromText(text: string, backgroundStyle?: string): ThemeMood {
+function inferMoodFromText(
+  text: string,
+  backgroundStyle?: string,
+  genre?: ScriptGenre | string
+): ThemeMood {
   if (backgroundStyle === 'Cosmic & Science Lab') return 'cosmic_space';
   if (backgroundStyle === 'Warm Comedy Stage') return 'comedy_office';
+  if (genre === 'Comedy') return 'comedy_office';
+  if (genre === 'Business & Finance') return 'finance_business';
+  if (genre === 'History & Facts') return 'history_world';
+  if (genre === 'Psychology') return 'mind_psychology';
+  if (genre === 'Science' || genre === 'Tech & AI') return 'science_tech';
 
   const t = text.toLowerCase();
   if (/\b(space|cosmos|planet|star|astronaut|galaxy|moon|gravity|nasa)\b|अंतरिक्ष|तारे|चांद|गुरुत्वाकर्षण/.test(t)) {
@@ -165,685 +216,428 @@ function inferMoodFromText(text: string, backgroundStyle?: string): ThemeMood {
   return 'studio_editorial';
 }
 
-interface FallbackBeatSpec {
-  query: string;
-  headline: string;
-  visualCardType: VisualCardType;
-  calloutText: string;
-  subBadge: string;
-  isPunchline: boolean;
-}
-
-function fallbackQueriesForMood(
-  mood: ThemeMood,
-  title: string,
-  prodStyle: ResolvedProductionStyle
-): FallbackBeatSpec[] {
-  const cleanTitle = title.replace(/[^\w\s-]/g, ' ').trim();
-  if (mood === 'comedy_office' || prodStyle === 'comedy_skit') {
-    return [
-      {
-        query: 'tired office worker coffee laptop',
-        headline: '01 QUICK 5-MIN SYNC',
-        visualCardType: 'reaction_chat',
-        calloutText: 'BOSS: "QUICK 5-MIN SYNC" 👀',
-        subBadge: '9:00 AM CALENDAR TRAP',
-        isPunchline: false,
-      },
-      {
-        query: 'stressed person laptop desk clock',
-        headline: '02 47 MINUTES LATER',
-        visualCardType: 'comic_bubble',
-        calloutText: 'STILL ON SLIDE #1 💀',
-        subBadge: '9:47 AM · NO ESCAPE',
-        isPunchline: true,
-      },
-      {
-        query: 'cold coffee cup tired hands desk',
-        headline: '03 COLD CHAI REALITY',
-        visualCardType: 'reaction_chat',
-        calloutText: 'GARAM CHAI BECAME ICED TEA ☕',
-        subBadge: 'REALITY CHECK',
-        isPunchline: false,
-      },
-      {
-        query: 'shocked funny face office coworker',
-        headline: '04 ONE SMALL DOUBT',
-        visualCardType: 'comic_bubble',
-        calloutText: '"EK CHHOTA SA QUESTION THA..." 🚨',
-        subBadge: 'DANGER ZONE',
-        isPunchline: true,
-      },
-      {
-        query: 'happy person closing laptop smiling',
-        headline: '05 SURVIVAL RULE',
-        visualCardType: 'stat_callout',
-        calloutText: 'JUST SEND BULLET POINTS ⚡',
-        subBadge: 'CREATOR RULE #1',
-        isPunchline: false,
-      },
-      {
-        query: 'friends laughing together smiling',
-        headline: '06 TAG THAT PERSON',
-        visualCardType: 'comic_bubble',
-        calloutText: 'TAG YOUR "5-MIN" FRIEND 😂',
-        subBadge: 'SHARE THE PAIN',
-        isPunchline: true,
-      },
-    ];
-  }
-
-  switch (mood) {
-    case 'cosmic_space':
-      return [
-        {
-          query: 'Earth seen from space astronauts',
-          headline: '01 ZERO GRAVITY HOOK',
-          visualCardType: 'stat_callout',
-          calloutText: 'GRAVITY LOCK: OFF (0.00 G)',
-          subBadge: 'ORBITAL PHYSICS',
-          isPunchline: false,
-        },
-        {
-          query: 'astronaut floating space station smiling',
-          headline: '02 EVERYDAY WEIRD FACT',
-          visualCardType: 'comparison_split',
-          calloutText: 'EARTH TEAR DROPS vs ORBIT BALL',
-          subBadge: 'LIVE EXPERIMENT',
-          isPunchline: true,
-        },
-        {
-          query: 'water sphere microgravity floating astronaut',
-          headline: '03 SURFACE TENSION',
-          visualCardType: 'stat_callout',
-          calloutText: 'LIQUID STICKS TO YOUR CHEEK',
-          subBadge: 'NO DRIPPING',
-          isPunchline: false,
-        },
-        {
-          query: 'nebula stars telescope glowing cosmos',
-          headline: '04 MIND-BLOWING SCALE',
-          visualCardType: 'kinetic_quote',
-          calloutText: '28,000 KM/H FREE FALL',
-          subBadge: 'DEEP SPACE VIEW',
-          isPunchline: true,
-        },
-        {
-          query: 'astronaut helmet reflection earth',
-          headline: '05 HUMAN SURVIVAL',
-          visualCardType: 'stat_callout',
-          calloutText: '16 SUNRISES EVERY 24 HOURS',
-          subBadge: 'ISS DAILY LOG',
-          isPunchline: false,
-        },
-        {
-          query: 'night sky milky way stargazing person',
-          headline: '06 FOLLOW FOR MORE',
-          visualCardType: 'kinetic_quote',
-          calloutText: 'SCIENCE IN 30 SECONDS ✨',
-          subBadge: 'SAVE THIS FACT',
-          isPunchline: false,
-        },
-      ];
-    case 'science_tech':
-      return [
-        {
-          query: 'person thinking glowing screen technology',
-          headline: '01 THE HIDDEN SIGNAL',
-          visualCardType: 'stat_callout',
-          calloutText: 'WHAT NOBODY NOTICES FIRST',
-          subBadge: 'THE MECHANISM',
-          isPunchline: false,
-        },
-        {
-          query: 'scientist laboratory experiment colorful',
-          headline: '02 REAL LAB PROOF',
-          visualCardType: 'comparison_split',
-          calloutText: 'GUSSWORK vs LAB EVIDENCE',
-          subBadge: 'PROVEN STUDY',
-          isPunchline: true,
-        },
-        {
-          query: 'human brain neuron light connection',
-          headline: '03 INSIDE THE SYSTEM',
-          visualCardType: 'stat_callout',
-          calloutText: '3X FASTER PATTERN LOCK',
-          subBadge: 'HOW IT WORKS',
-          isPunchline: false,
-        },
-        {
-          query: 'futuristic computer code hardware close up',
-          headline: '04 REAL-WORLD IMPACT',
-          visualCardType: 'kinetic_quote',
-          calloutText: 'WHY THIS CHANGES EVERYTHING',
-          subBadge: 'KEY INSIGHT',
-          isPunchline: true,
-        },
-        {
-          query: 'engineer testing prototype workshop',
-          headline: '05 DAILY APPLICATION',
-          visualCardType: 'stat_callout',
-          calloutText: 'USE THIS IN 10 SECONDS',
-          subBadge: 'PRACTICAL TEST',
-          isPunchline: false,
-        },
-        {
-          query: 'curious student learning science amazed',
-          headline: '06 NEXT DISCOVERY',
-          visualCardType: 'kinetic_quote',
-          calloutText: 'SAVE BEFORE YOU FORGET 🔬',
-          subBadge: 'PART 2 NEXT',
-          isPunchline: false,
-        },
-      ];
-    case 'finance_business':
-      return [
-        {
-          query: 'person checking smartphone money wallet',
-          headline: '01 SILENT MONEY LEAK',
-          visualCardType: 'stat_callout',
-          calloutText: 'WHY SALARY VANISHES FAST',
-          subBadge: 'MONEY TRAP',
-          isPunchline: false,
-        },
-        {
-          query: 'coffee bills calculator desk budget',
-          headline: '02 TINY HABITS ADD UP',
-          visualCardType: 'comparison_split',
-          calloutText: 'SMALL SPEND vs COMPOUNDING',
-          subBadge: 'NUMBERS TEST',
-          isPunchline: true,
-        },
-        {
-          query: 'stock chart green arrow growth screen',
-          headline: '03 THE 10-YEAR CURVE',
-          visualCardType: 'stat_callout',
-          calloutText: 'TIME BEATS TIMING EVERY TIME',
-          subBadge: 'COMPOUND MATH',
-          isPunchline: false,
-        },
-        {
-          query: 'young entrepreneur laptop cafe working',
-          headline: '04 SMART EXECUTION',
-          visualCardType: 'kinetic_quote',
-          calloutText: 'EARN IN SKILLS, SAVE IN SYSTEMS',
-          subBadge: 'RULE #1',
-          isPunchline: true,
-        },
-        {
-          query: 'coins jar savings piggy bank desk',
-          headline: '05 ZERO-STRESS BUFFER',
-          visualCardType: 'stat_callout',
-          calloutText: 'AUTO-SAVE ON DAY ONE',
-          subBadge: 'SIMPLE SYSTEM',
-          isPunchline: false,
-        },
-        {
-          query: 'confident founder smiling sunset cityscape',
-          headline: '06 START THIS MONTH',
-          visualCardType: 'kinetic_quote',
-          calloutText: 'SAVE & SHARE WITH A FRIEND 📈',
-          subBadge: 'ACTION STEP',
-          isPunchline: false,
-        },
-      ];
-    case 'mind_psychology':
-      return [
-        {
-          query: 'person waiting impatiently airport luggage',
-          headline: '01 THE HIDDEN MIND HACK',
-          visualCardType: 'reaction_chat',
-          calloutText: 'WHY WAITING FEELS SO LONG',
-          subBadge: 'PSYCHOLOGY TRICK',
-          isPunchline: false,
-        },
-        {
-          query: 'people walking busy corridor terminal',
-          headline: '02 PERCEPTION vs CLOCK',
-          visualCardType: 'comparison_split',
-          calloutText: 'WALKING = HAPPY · STANDING = MAD',
-          subBadge: 'REAL EXPERIMENT',
-          isPunchline: true,
-        },
-        {
-          query: 'person looking in mirror thoughtful portrait',
-          headline: '03 ATTENTION REDIRECTED',
-          visualCardType: 'stat_callout',
-          calloutText: 'BUSY BRAIN IGNORES THE CLOCK',
-          subBadge: 'BRAIN DESIGN',
-          isPunchline: false,
-        },
-        {
-          query: 'clock time hour glass close up',
-          headline: '04 ZERO COST TRICK',
-          visualCardType: 'kinetic_quote',
-          calloutText: 'CHANGE EXPERIENCE, NOT SPEED',
-          subBadge: 'UX PSYCHOLOGY',
-          isPunchline: true,
-        },
-        {
-          query: 'smiling traveler walking smoothly airport',
-          headline: '05 ZERO COMPLAINTS',
-          visualCardType: 'stat_callout',
-          calloutText: 'COMPLAINTS DROPPED NEAR ZERO',
-          subBadge: 'PROVEN RESULT',
-          isPunchline: false,
-        },
-        {
-          query: 'calm person morning coffee sunlight',
-          headline: '06 SPOT IT TODAY',
-          visualCardType: 'kinetic_quote',
-          calloutText: 'NOTICE THIS NEXT TIME 🧠',
-          subBadge: 'MIND BLOWN',
-          isPunchline: false,
-        },
-      ];
-    case 'history_world':
-      return [
-        {
-          query: 'ancient stone ruins golden sunset',
-          headline: '01 FORGOTTEN ORIGIN',
-          visualCardType: 'kinetic_quote',
-          calloutText: 'BUILT CENTURIES BEFORE US',
-          subBadge: 'ARCHIVAL MYSTERY',
-          isPunchline: false,
-        },
-        {
-          query: 'old vintage map compass parchment',
-          headline: '02 HIDDEN CLUE',
-          visualCardType: 'stat_callout',
-          calloutText: 'THE DETAIL BOOKS SKIPPED',
-          subBadge: 'HISTORICAL RECORD',
-          isPunchline: false,
-        },
-        {
-          query: 'Indian palace architecture sunrise golden',
-          headline: '03 MASTER ENGINEERING',
-          visualCardType: 'comparison_split',
-          calloutText: 'ANCIENT CRAFT vs MODERN TECH',
-          subBadge: 'STILL STANDING',
-          isPunchline: true,
-        },
-        {
-          query: 'historian reading old archive books',
-          headline: '04 PROOF UNCOVERED',
-          visualCardType: 'stat_callout',
-          calloutText: 'VERIFIED BY REAL ARTIFACTS',
-          subBadge: 'FACT CHECKED',
-          isPunchline: false,
-        },
-        {
-          query: 'dramatic monument clouds silhouettes',
-          headline: '05 TURNING POINT',
-          visualCardType: 'kinetic_quote',
-          calloutText: 'ONE DECISION CHANGED HISTORY',
-          subBadge: 'TIMELINE SHIFT',
-          isPunchline: true,
-        },
-        {
-          query: 'horizon sunlight over historic city',
-          headline: '06 STILL ALIVE TODAY',
-          visualCardType: 'kinetic_quote',
-          calloutText: 'HISTORY EXPLAINS TODAY 🏛️',
-          subBadge: 'SHARE THE STORY',
-          isPunchline: false,
-        },
-      ];
-    case 'nature_earth':
-      return [
-        {
-          query: 'dramatic ocean wave deep blue sunlight',
-          headline: '01 PLANET WONDER',
-          visualCardType: 'stat_callout',
-          calloutText: 'HIDDEN POWER OF NATURE',
-          subBadge: 'EARTH DISCOVERY',
-          isPunchline: false,
-        },
-        {
-          query: 'lush green rainforest mist sunrise',
-          headline: '02 LIVING NETWORK',
-          visualCardType: 'comparison_split',
-          calloutText: 'WHAT WE SEE vs UNDERNEATH',
-          subBadge: 'ECOSYSTEM',
-          isPunchline: false,
-        },
-        {
-          query: 'colorful coral reef fish underwater',
-          headline: '03 DELICATE BALANCE',
-          visualCardType: 'stat_callout',
-          calloutText: 'EVERY PIECE CONNECTS',
-          subBadge: 'NATURE DESIGN',
-          isPunchline: true,
-        },
-        {
-          query: 'snowy mountain peak golden alpenglow',
-          headline: '04 SCALE OF EARTH',
-          visualCardType: 'kinetic_quote',
-          calloutText: 'MILLIONS OF YEARS IN THE MAKING',
-          subBadge: 'PURE WONDER',
-          isPunchline: false,
-        },
-        {
-          query: 'aurora borealis night sky glowing',
-          headline: '05 COSMIC SHIELD',
-          visualCardType: 'stat_callout',
-          calloutText: 'INVISIBLE PROTECTION ABOVE US',
-          subBadge: 'ATMOSPHERE',
-          isPunchline: true,
-        },
-        {
-          query: 'person hiking overlooking green valley',
-          headline: '06 RESPECT THE WILD',
-          visualCardType: 'kinetic_quote',
-          calloutText: 'SAVE THIS NATURAL WONDER 🌍',
-          subBadge: 'PART 1',
-          isPunchline: false,
-        },
-      ];
-    default:
-      return [
-        {
-          query: cleanTitle.split(' ').slice(0, 3).join(' ') || 'creator talking camera microphone',
-          headline: '01 OPENING HOOK',
-          visualCardType: prodStyle === 'visual_explainer' ? 'stat_callout' : 'reaction_chat',
-          calloutText: 'WAIT TILL YOU HEAR THIS 👀',
-          subBadge: 'THE REAL TRUTH',
-          isPunchline: false,
-        },
-        {
-          query: 'person explaining whiteboard notebook cafe',
-          headline: '02 THE REAL REASON',
-          visualCardType: 'comparison_split',
-          calloutText: 'COMMON MYTH vs REALITY',
-          subBadge: 'LOOK CLOSER',
-          isPunchline: true,
-        },
-        {
-          query: 'smartphone filming content studio desk',
-          headline: '03 SIMPLE EXAMPLE',
-          visualCardType: 'stat_callout',
-          calloutText: 'WHY 90% MISS THIS STEP',
-          subBadge: 'PROOF POINT',
-          isPunchline: false,
-        },
-        {
-          query: 'friends talking laughing coffee shop',
-          headline: '04 RELATABLE MOMENT',
-          visualCardType: 'comic_bubble',
-          calloutText: 'HUM SAB YAHI GALTI KARTE HAIN',
-          subBadge: 'EVERYDAY HABIT',
-          isPunchline: true,
-        },
-        {
-          query: 'focused creator editing video laptop',
-          headline: '05 DO THIS INSTEAD',
-          visualCardType: 'stat_callout',
-          calloutText: 'ONE SMALL SWITCH = BIG RESULT',
-          subBadge: 'ACTIONABLE TIP',
-          isPunchline: false,
-        },
-        {
-          query: 'smiling confident person warm sunlight',
-          headline: '06 FINAL TAKEAWAY',
-          visualCardType: 'kinetic_quote',
-          calloutText: 'FOLLOW FOR PART 2 ⚡',
-          subBadge: 'SAVE & SHARE',
-          isPunchline: false,
-        },
-      ];
+async function encodeImageFileForGemini(diskPath?: string): Promise<{ mimeType: string; data: string } | null> {
+  if (!diskPath) return null;
+  try {
+    const st = await fs.stat(diskPath);
+    if (!st.isFile() || st.size === 0 || st.size > 4_000_000) return null;
+    const ext = path.extname(diskPath).toLowerCase();
+    const mimeType =
+      ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+    const buf = await fs.readFile(diskPath);
+    return { mimeType, data: buf.toString('base64') };
+  } catch {
+    return null;
   }
 }
 
-async function generateStoryboardViaGemini(
-  title: string,
-  cues: string[],
-  backgroundStyle: string | undefined,
-  prodStyle: ResolvedProductionStyle
-): Promise<Array<{
+interface VisionStage1Decision {
+  promptTemplateId: string;
   headline: string;
   searchQuery: string;
-  themeMood: ThemeMood;
-  visualCardType: VisualCardType;
   calloutText: string;
   subBadge: string;
   isPunchline: boolean;
-}> | null> {
+  visionRationale: string;
+}
+
+async function analyzeScriptAndSelectPromptLibraryViaGeminiVision(params: {
+  title: string;
+  cues: string[];
+  language?: TwinLanguage;
+  format?: VideoFormatType | string;
+  genre?: ScriptGenre | string;
+  writingStyle?: WritingStyleMode | string;
+  emotion?: string;
+  backgroundStyle?: string;
+  prodStyle: ResolvedProductionStyle;
+  presenterLabel: string;
+  presenterImagePath?: string;
+  beatTemplateOverrides?: Record<number, string>;
+}): Promise<VisionStage1Decision[] | null> {
   const ai = getGeminiClient();
   if (!ai) return null;
 
   try {
-    const prompt = `You are a Creative Short-Form Video Director designing 6 chronological relatable visual scenes matching a spoken voiceover.
-Video Title: "${title}"
-Production Style: "${prodStyle}" (${
-      prodStyle === 'comedy_skit'
-        ? 'punchy comic timing, relatable everyday human situations, funny chat/reaction bubbles'
-        : prodStyle === 'visual_explainer'
-          ? 'sharp stat callouts, myth vs reality cards, crystal clear conceptual photography'
-          : prodStyle === 'story_cinema'
-            ? 'dramatic atmospheric scenes and chapter quote cards'
-            : 'relatable creator hooks, lifestyle human scenes, punchy cards'
-    })
-Requested Background Preference: "${backgroundStyle || 'Auto-Match Script Theme'}"
+    const libraryIndexText = VISUAL_PROMPT_LIBRARY.map(
+      (t) =>
+        `- id="${t.id}" | name="${t.name}" | category="${t.category}" | motion="${t.motionGraphicPreset}" | camera="${t.cameraMotion}" | style="${t.productionStyle}" | desc="${t.directorPrompt}"`
+    ).join('\n');
 
-For each of the 6 spoken script beats below, generate:
-1. headline: concise 2-4 word top label (English or crisp Hinglish).
-2. searchQuery: 3-4 concrete English nouns describing a RELATABLE HUMAN ACTION OR SCENE for real photography search (e.g., "tired office worker coffee laptop", "friends laughing cafe funny", "shocked face smartphone screen", "astronaut water drop space", "airport travelers waiting"). Avoid generic empty buildings!
-3. themeMood: one of cosmic_space, science_tech, comedy_office, finance_business, history_world, mind_psychology, nature_earth, studio_editorial.
-4. visualCardType: choose the best dynamic on-screen graphic overlay card: "reaction_chat", "stat_callout", "comparison_split", "comic_bubble", or "kinetic_quote".
-5. calloutText: a punchy 2-6 word on-screen visual pop-up text directly illustrating THAT spoken line (in Hinglish/English/Hindi matching the script tone — e.g. "BOSS: QUICK 5-MIN SYNC 👀", "MYTH: MORE SLEEP = LAZY ❌", "47 MINS ON SLIDE ONE 💀").
-6. subBadge: tiny 2-3 word label above the callout card (e.g., "9:00 AM TRAP", "LAB PROOF", "REALITY CHECK").
-7. isPunchline: boolean true if that beat is a comedic punchline, plot twist, or big reveal!
+    const overrideNotes = Object.entries(params.beatTemplateOverrides || {})
+      .filter(([, tplId]) => Boolean(getPromptTemplateById(tplId)))
+      .map(([idx, tplId]) => `Beat ${Number(idx) + 1} MUST use promptTemplateId="${tplId}"`)
+      .join('; ');
 
-Beats:
-${cues.map((c, i) => `Beat ${i + 1}: "${c}"`).join('\n')}`;
+    const promptText = `You are a Multimodal Film & Motion-Graphic Vision Director.
+Inspect BOTH the attached presenter portrait (if present) AND the full script context/metadata below, then select the best matching visual asset template from our Structured Prompt-Library for each of the 6 chronological beats.
 
-    const resp = await ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
-      contents: prompt,
-      config: {
-        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              headline: { type: Type.STRING },
-              searchQuery: { type: Type.STRING },
-              themeMood: { type: Type.STRING },
-              visualCardType: { type: Type.STRING },
-              calloutText: { type: Type.STRING },
-              subBadge: { type: Type.STRING },
-              isPunchline: { type: Type.BOOLEAN },
+SCRIPT METADATA:
+- Title: "${params.title}"
+- Language: "${params.language || 'Hinglish'}"
+- Genre: "${params.genre || 'Auto'}"
+- Writing Style: "${params.writingStyle || 'Auto'}"
+- Video Format: "${params.format || 'Talking-Head'}"
+- Intended Emotion: "${params.emotion || 'Conversational'}"
+- Production Style: "${params.prodStyle}"
+- Background Engine: "${params.backgroundStyle || 'Auto-Match Script Theme'}"
+- Active Presenter: "${params.presenterLabel}"
+${overrideNotes ? `- Creator Manual Overrides (Respect Strictly): ${overrideNotes}\n` : ''}
+STRUCTURED PROMPT-LIBRARY CATALOG (Pick exact "id" values from here):
+${libraryIndexText}
+
+For each of the 6 spoken beats below, output:
+1. promptTemplateId: Exact "id" from the Prompt-Library matching the beat's action, tone, and the presenter portrait's lighting/vibe.
+2. headline: Crisp 2-4 word scene title (English or punchy Hinglish).
+3. searchQuery: 3-4 concrete English nouns describing a moving clip or relatable human action matching the selected prompt template (avoid plain empty buildings).
+4. calloutText: Bold 2-6 word motion-graphic pop-up text illustrating that exact spoken line.
+5. subBadge: Tiny 2-3 word label above the callout card.
+6. isPunchline: boolean true if that beat is a comedic punchline, reveal, or emotional turn.
+7. visionRationale: Short 6-12 word note explaining why this prompt-library asset fits the script metadata and presenter appearance.
+
+SPOKEN BEATS:
+${params.cues.map((c, i) => `Beat ${i + 1}: "${c}"`).join('\n')}`;
+
+    const parts: Array<any> = [];
+    const portraitPart = await encodeImageFileForGemini(params.presenterImagePath);
+    if (portraitPart) {
+      parts.push({ inlineData: portraitPart });
+    }
+    parts.push({ text: promptText });
+
+    const resp = await withTimeout(
+      ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: { parts },
+        config: {
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                promptTemplateId: { type: Type.STRING },
+                headline: { type: Type.STRING },
+                searchQuery: { type: Type.STRING },
+                calloutText: { type: Type.STRING },
+                subBadge: { type: Type.STRING },
+                isPunchline: { type: Type.BOOLEAN },
+                visionRationale: { type: Type.STRING },
+              },
+              required: [
+                'promptTemplateId',
+                'headline',
+                'searchQuery',
+                'calloutText',
+                'subBadge',
+                'isPunchline',
+                'visionRationale',
+              ],
             },
-            required: [
-              'headline',
-              'searchQuery',
-              'themeMood',
-              'visualCardType',
-              'calloutText',
-              'subBadge',
-              'isPunchline',
-            ],
           },
         },
-      },
-    });
+      }),
+      9500,
+      'Gemini Vision Stage 1 timeout'
+    );
 
     const parsed = JSON.parse((resp.text ?? '[]').trim());
     if (Array.isArray(parsed) && parsed.length >= 6) {
-      return parsed.slice(0, 6).map((item) => {
-        const mood = (Object.keys(MOOD_PALETTES).includes(item.themeMood)
-          ? item.themeMood
-          : inferMoodFromText(`${title} ${cues.join(' ')}`, backgroundStyle)) as ThemeMood;
-        const cardType = VALID_CARD_TYPES.includes(item.visualCardType)
-          ? (item.visualCardType as VisualCardType)
-          : prodStyle === 'comedy_skit'
-            ? 'comic_bubble'
-            : 'stat_callout';
+      return parsed.slice(0, 6).map((item, idx) => {
+        const overrideId = params.beatTemplateOverrides?.[idx];
+        const validTpl =
+          getPromptTemplateById(overrideId) ||
+          getPromptTemplateById(item.promptTemplateId) ||
+          VISUAL_PROMPT_LIBRARY[idx % VISUAL_PROMPT_LIBRARY.length];
         return {
-          headline: String(item.headline || 'SCENE INSIGHT').slice(0, 42),
-          searchQuery: String(item.searchQuery || title).slice(0, 80),
-          themeMood: mood,
-          visualCardType: cardType,
-          calloutText: String(item.calloutText || item.headline || 'WATCH THIS').slice(0, 46),
-          subBadge: String(item.subBadge || 'KEY MOMENT').slice(0, 26),
+          promptTemplateId: validTpl.id,
+          headline: String(item.headline || validTpl.name).slice(0, 42),
+          searchQuery: String(item.searchQuery || validTpl.clipKeywords[0]).slice(0, 80),
+          calloutText: String(item.calloutText || validTpl.sampleCallout).slice(0, 46),
+          subBadge: String(item.subBadge || validTpl.sampleSubBadge).slice(0, 26),
           isPunchline: Boolean(item.isPunchline),
+          visionRationale: String(
+            item.visionRationale || `Matched ${validTpl.name} to ${params.prodStyle} & presenter tone`
+          ).slice(0, 96),
         };
       });
     }
   } catch {
-    // Cleanly fall back to deterministic bilingual visual mapper
+    // Cleanly fall back to deterministic metadata + prompt-library selector
   }
   return null;
 }
 
-async function fetchOpenverseCandidates(query: string): Promise<string[]> {
-  const urls: string[] = [];
+interface CandidateAsset {
+  url: string;
+  isAnimatedGif: boolean;
+}
+
+async function fetchOpenverseCandidates(query: string): Promise<CandidateAsset[]> {
+  const out: CandidateAsset[] = [];
   try {
     const ovUrl = `https://api.openverse.org/v1/images/?q=${encodeURIComponent(
       query
     )}&page_size=6&mature=false`;
     const r = await fetch(ovUrl, {
       headers: { 'User-Agent': 'TwinForgeStudio/1.0 (visual-director)' },
-      signal: AbortSignal.timeout(4500),
+      signal: AbortSignal.timeout(3000),
     });
     if (r.ok) {
       const data = await r.json();
       const items = Array.isArray(data?.results) ? data.results : [];
       for (const item of items) {
         if ((item.width && item.width < 420) || (item.height && item.height < 280)) continue;
-        // Prefer direct JPEG/PNG url first or reliable Openverse thumbnail proxy
-        if (typeof item.url === 'string' && /\.(jpe?g|png)(\?|$)/i.test(item.url)) {
-          urls.push(item.url);
+        if (typeof item.url === 'string' && /\.gif(\?|$)/i.test(item.url)) {
+          out.push({ url: item.url, isAnimatedGif: true });
+        } else if (typeof item.url === 'string' && /\.(jpe?g|png)(\?|$)/i.test(item.url)) {
+          out.push({ url: item.url, isAnimatedGif: false });
         } else if (typeof item.thumbnail === 'string' && item.thumbnail.startsWith('http')) {
-          urls.push(item.thumbnail);
+          out.push({ url: item.thumbnail, isAnimatedGif: false });
         }
       }
     }
   } catch {
-    // Ignore transient timeout
+    // ignore timeout
   }
-  return urls;
+  return out;
 }
 
-async function fetchTopicPhotoCandidates(query: string, mood: ThemeMood): Promise<string[]> {
-  const results: string[] = [];
-  const headers = { 'User-Agent': 'TwinForgeStudio/1.0 (visual-director)' };
+async function fetchWikimediaCommonsCandidates(query: string): Promise<CandidateAsset[]> {
+  const out: CandidateAsset[] = [];
+  try {
+    const commonsUrl = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(
+      `${query} filetype:bitmap`
+    )}&gsrlimit=6&prop=imageinfo&iiprop=url|mime|size&iiurlwidth=1000&format=json`;
+    const r = await fetch(commonsUrl, {
+      headers: { 'User-Agent': 'TwinForgeStudio/1.0 (visual-director)' },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (r.ok) {
+      const data = await r.json();
+      const pages = Object.values(data?.query?.pages || {}) as Array<any>;
+      for (const p of pages) {
+        const info = p?.imageinfo?.[0];
+        if (!info) continue;
+        if (info.mime === 'image/gif' && info.url && (info.size || 0) < 4_500_000) {
+          out.push({ url: info.url, isAnimatedGif: true });
+        } else if (
+          (info.mime === 'image/jpeg' || info.mime === 'image/png') &&
+          (info.width || 0) >= 480
+        ) {
+          const src = info.thumburl || info.url;
+          if (src) out.push({ url: src, isAnimatedGif: false });
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return out;
+}
 
+async function fetchWikipediaCandidates(query: string): Promise<CandidateAsset[]> {
+  const out: CandidateAsset[] = [];
+  try {
+    const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(
+      query
+    )}&gsrlimit=4&prop=pageimages&piprop=thumbnail|original&pithumbsize=1000&format=json&origin=*`;
+    const r = await fetch(wikiUrl, {
+      headers: { 'User-Agent': 'TwinForgeStudio/1.0 (visual-director)' },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (r.ok) {
+      const data = await r.json();
+      const pages = Object.values(data?.query?.pages || {}) as Array<any>;
+      for (const p of pages) {
+        const src: string | undefined = p?.thumbnail?.source || p?.original?.source;
+        if (src && /\.(jpe?g|png|gif)(\?|$)/i.test(src)) {
+          out.push({ url: src, isAnimatedGif: /\.gif(\?|$)/i.test(src) });
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return out;
+}
+
+async function fetchTopicMediaCandidates(
+  query: string,
+  mood: ThemeMood
+): Promise<CandidateAsset[]> {
   const preferLifestyleFirst =
     mood === 'comedy_office' ||
     mood === 'mind_psychology' ||
     mood === 'finance_business' ||
     mood === 'studio_editorial';
 
-  // 1. For relatable human/comedy/lifestyle scenes, try Openverse Creative Commons photography first
-  if (preferLifestyleFirst) {
-    const ov = await fetchOpenverseCandidates(query);
-    results.push(...ov);
-  }
+  const [openverse, commons, wiki] = await Promise.all([
+    fetchOpenverseCandidates(query),
+    fetchWikimediaCommonsCandidates(query),
+    fetchWikipediaCandidates(query),
+  ]);
 
-  // 2. Wikipedia PageImages (great for space, science, history, landmarks, specific concepts)
-  if (results.length < 3) {
-    try {
-      const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(
-        query
-      )}&gsrlimit=4&prop=pageimages&piprop=thumbnail|original&pithumbsize=1200&format=json&origin=*`;
-      const r = await fetch(wikiUrl, { headers, signal: AbortSignal.timeout(4000) });
-      if (r.ok) {
-        const data = await r.json();
-        const pages = Object.values(data?.query?.pages || {}) as Array<any>;
-        for (const p of pages) {
-          const src: string | undefined = p?.thumbnail?.source || p?.original?.source;
-          if (src && /\.(jpe?g|png)(\?|$)/i.test(src)) {
-            results.push(src);
-          }
-        }
-      }
-    } catch {
-      // continue
-    }
-  }
+  const results = preferLifestyleFirst
+    ? [...openverse, ...commons, ...wiki]
+    : [...commons, ...wiki, ...openverse];
 
-  // 3. Openverse fallback if Wikipedia didn't yield enough relatable scenes
-  if (!preferLifestyleFirst && results.length < 2) {
-    const ov = await fetchOpenverseCandidates(query);
-    results.push(...ov);
-  }
-
-  // 4. Wikimedia Commons high-res bitmap search
-  if (results.length < 2) {
-    try {
-      const commonsUrl = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(
-        `${query} filetype:bitmap`
-      )}&gsrlimit=5&prop=imageinfo&iiprop=url|mime|size&iiurlwidth=1200&format=json`;
-      const r = await fetch(commonsUrl, { headers, signal: AbortSignal.timeout(4000) });
-      if (r.ok) {
-        const data = await r.json();
-        const pages = Object.values(data?.query?.pages || {}) as Array<any>;
-        for (const p of pages) {
-          const info = p?.imageinfo?.[0];
-          if (
-            info &&
-            (info.mime === 'image/jpeg' || info.mime === 'image/png') &&
-            (info.width || 0) >= 500
-          ) {
-            const src = info.thumburl || info.url;
-            if (src) results.push(src);
-          }
-        }
-      }
-    } catch {
-      // ignore timeout
-    }
-  }
-
-  return Array.from(new Set(results));
+  const seen = new Set<string>();
+  return results.filter((c) => {
+    if (seen.has(c.url)) return false;
+    seen.add(c.url);
+    return true;
+  });
 }
 
-async function cacheImageLocally(
-  remoteUrl: string,
-  cacheKey: string,
-  mood: ThemeMood = 'studio_editorial'
-): Promise<{ localPath: string; publicUrl: string } | null> {
-  await fs.mkdir(SCENE_CACHE_DIR, { recursive: true });
-  const hash = crypto.createHash('sha1').update(cacheKey).digest('hex').slice(0, 14);
-  const guessedExt = /\.png(\?|$)/i.test(remoteUrl) ? '.png' : '.jpg';
+interface DownloadedMediaBuffer {
+  url: string;
+  ext: '.jpg' | '.png' | '.gif';
+  mimeType: string;
+  buf: Buffer;
+  isAnimatedGif: boolean;
+}
 
-  for (const checkExt of ['.jpg', '.png']) {
-    const existing = `scene_${mood}_${hash}${checkExt}`;
-    const existingPath = path.join(SCENE_CACHE_DIR, existing);
-    try {
-      const st = await fs.stat(existingPath);
-      if (st.size > 8000) {
-        return { localPath: existingPath, publicUrl: `/api/media/scenes/${existing}` };
-      }
-    } catch {
-      // miss
-    }
-  }
-
+async function downloadCandidateBuffer(cand: CandidateAsset): Promise<DownloadedMediaBuffer | null> {
   try {
-    const resp = await fetch(remoteUrl, {
+    const resp = await fetch(cand.url, {
       headers: { 'User-Agent': 'TwinForgeStudio/1.0' },
-      signal: AbortSignal.timeout(5500),
+      signal: AbortSignal.timeout(3500),
     });
     if (!resp.ok) return null;
     const ct = (resp.headers.get('content-type') || '').toLowerCase();
-    // Strictly stick to JPEG or PNG so both Canvas and FFmpeg decode reliably
-    if (!ct.includes('image/jpeg') && !ct.includes('image/jpg') && !ct.includes('image/png')) {
-      return null;
-    }
+    const isGif = ct.includes('image/gif') || cand.isAnimatedGif;
+    const isPng = ct.includes('image/png');
+    const isJpeg = ct.includes('image/jpeg') || ct.includes('image/jpg');
+    if (!isGif && !isPng && !isJpeg) return null;
     const buf = Buffer.from(await resp.arrayBuffer());
-    if (buf.length < 8000) return null;
-    const ext = ct.includes('image/png') ? '.png' : guessedExt;
-    const filename = `scene_${mood}_${hash}${ext}`;
-    const destPath = path.join(SCENE_CACHE_DIR, filename);
-    await fs.writeFile(destPath, buf);
-    return { localPath: destPath, publicUrl: `/api/media/scenes/${filename}` };
+    if (buf.length < 8000 || buf.length > 5_000_000) return null;
+    return {
+      url: cand.url,
+      ext: isGif ? '.gif' : isPng ? '.png' : '.jpg',
+      mimeType: isGif ? 'image/gif' : isPng ? 'image/png' : 'image/jpeg',
+      buf,
+      isAnimatedGif: isGif,
+    };
   } catch {
     return null;
   }
+}
+
+async function persistDownloadedMedia(
+  item: DownloadedMediaBuffer,
+  cacheKey: string,
+  mood: ThemeMood
+): Promise<{ localPath: string; publicUrl: string; mediaKind: 'animated_clip' | 'curated_frame' }> {
+  await fs.mkdir(SCENE_CACHE_DIR, { recursive: true });
+  const hash = crypto.createHash('sha1').update(cacheKey).digest('hex').slice(0, 14);
+  const filename = `scene_${mood}_${hash}${item.ext}`;
+  const destPath = path.join(SCENE_CACHE_DIR, filename);
+  await fs.writeFile(destPath, item.buf);
+  return {
+    localPath: destPath,
+    publicUrl: `/api/media/scenes/${filename}`,
+    mediaKind: item.isAnimatedGif ? 'animated_clip' : 'curated_frame',
+  };
+}
+
+/**
+ * Gemini Vision Pass 2: Visually inspect fetched candidate scene images/GIFs
+ * alongside the presenter portrait & script cue to pick the strongest visual fit.
+ */
+async function selectBestCandidateViaGeminiVision(params: {
+  candidates: DownloadedMediaBuffer[];
+  spokenCue: string;
+  template: VisualPromptTemplate;
+  presenterImagePath?: string;
+}): Promise<{ chosen: DownloadedMediaBuffer; visionNote?: string }> {
+  if (params.candidates.length === 0) {
+    throw new Error('No candidate media provided.');
+  }
+  if (params.candidates.length === 1) {
+    return { chosen: params.candidates[0] };
+  }
+
+  const ai = getGeminiClient();
+  if (!ai) {
+    const gifFirst = params.candidates.find((c) => c.isAnimatedGif) || params.candidates[0];
+    return { chosen: gifFirst };
+  }
+
+  try {
+    const parts: Array<any> = [];
+    const portraitPart = await encodeImageFileForGemini(params.presenterImagePath);
+    if (portraitPart) {
+      parts.push({ text: 'Reference Presenter Portrait (match lighting, warmth, and editorial clarity):' });
+      parts.push({ inlineData: portraitPart });
+    }
+
+    // Pass static JPG/PNG frames via inlineData and note animated GIF clips by metadata
+    params.candidates.forEach((cand, idx) => {
+      if (cand.isAnimatedGif || cand.mimeType === 'image/gif') {
+        const clipName = decodeURIComponent(cand.url.split('/').pop()?.split('?')[0] || 'animated_clip.gif');
+        parts.push({ text: `Candidate ${idx} (Animated GIF Motion Clip): "${clipName}"` });
+      } else {
+        parts.push({ text: `Candidate ${idx} (Visual Frame):` });
+        parts.push({
+          inlineData: {
+            mimeType: cand.mimeType,
+            data: cand.buf.toString('base64'),
+          },
+        });
+      }
+    });
+
+    parts.push({
+      text: `You are inspecting ${params.candidates.length} candidate visual assets for this video beat.
+Spoken Script Cue: "${params.spokenCue}"
+Selected Prompt-Library Template: "${params.template.name}" (${params.template.directorPrompt})
+
+Pick the single best candidate index (0 to ${params.candidates.length - 1}) that:
+1. Best illustrates the spoken cue and template mood with clear, expressive framing.
+2. Avoids heavy watermarks, tiny pixelated scans, or dull text screenshots.
+3. Harmonizes well visually with the Reference Presenter Portrait (if provided).
+
+Return JSON { "bestIndex": integer, "visionNote": "short 5-10 word visual reason" }.`,
+    });
+
+    const resp = await withTimeout(
+      ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: { parts },
+        config: {
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              bestIndex: { type: Type.INTEGER },
+              visionNote: { type: Type.STRING },
+            },
+            required: ['bestIndex', 'visionNote'],
+          },
+        },
+      }),
+      6500,
+      'Gemini Vision Stage 2 timeout'
+    );
+
+    const parsed = JSON.parse((resp.text ?? '{}').trim());
+    const idx = Number(parsed.bestIndex);
+    if (Number.isInteger(idx) && idx >= 0 && idx < params.candidates.length) {
+      return {
+        chosen: params.candidates[idx],
+        visionNote: parsed.visionNote ? String(parsed.visionNote).slice(0, 96) : undefined,
+      };
+    }
+  } catch {
+    // Graceful deterministic selection
+  }
+
+  return {
+    chosen: params.candidates.find((c) => c.isAnimatedGif) || params.candidates[0],
+  };
 }
 
 export interface ResolvedPresenterInfo {
@@ -858,6 +652,7 @@ export async function resolvePresenterSelection(params: {
   voiceIdentity?: string;
   title?: string;
   scriptText?: string;
+  genre?: ScriptGenre | string;
   mode: WorkspaceMode;
   twinFaceImageAssets: Array<{ id: string; url: string; diskPath?: string }>;
   preferredPortraitId?: string;
@@ -867,7 +662,7 @@ export async function resolvePresenterSelection(params: {
   if (requestedMode === 'faceless_broll') {
     return {
       presenterModeResolved: 'faceless_broll',
-      presenterLabel: 'Visual Documentary Only (Script B-Roll, No Same Face)',
+      presenterLabel: 'Visual Documentary Only (Dynamic Motion Scenes, No Face)',
       presenterImageUrls: [],
       presenterDiskPaths: [],
     };
@@ -928,7 +723,11 @@ export async function resolvePresenterSelection(params: {
 
   const voiceLower = (params.voiceIdentity || '').toLowerCase();
   const isFemaleVoice = FEMALE_VOICE_HINTS.some((h) => voiceLower.includes(h));
-  const mood = inferMoodFromText(`${params.title || ''} ${params.scriptText || ''}`);
+  const mood = inferMoodFromText(
+    `${params.title || ''} ${params.scriptText || ''}`,
+    undefined,
+    params.genre
+  );
 
   if (isFemaleVoice) {
     const femaleKey =
@@ -996,6 +795,9 @@ export async function planAndFetchScriptVisuals(params: {
   scriptText: string;
   language?: TwinLanguage;
   format?: VideoFormatType | string;
+  genre?: ScriptGenre | string;
+  writingStyle?: WritingStyleMode | string;
+  emotion?: string;
   backgroundStyle?: string;
   presenterMode?: PresenterVisualMode;
   productionStyle?: ProductionStyle;
@@ -1003,99 +805,185 @@ export async function planAndFetchScriptVisuals(params: {
   mode: WorkspaceMode;
   twinFaceImageAssets: Array<{ id: string; url: string; diskPath?: string }>;
   preferredPortraitId?: string;
-}): Promise<{
-  beats: SceneVisualBeat[];
-  beatDiskPaths: Array<string | undefined>;
-  presenter: ResolvedPresenterInfo;
-  productionStyleResolved: ResolvedProductionStyle;
-}> {
+  beatTemplateOverrides?: Record<number, string>;
+}): Promise<PlanVisualsResult> {
+  const cacheKey = crypto
+    .createHash('sha1')
+    .update(
+      JSON.stringify({
+        m: params.mode,
+        t: params.title,
+        s: params.scriptText,
+        l: params.language,
+        f: params.format,
+        g: params.genre,
+        w: params.writingStyle,
+        e: params.emotion,
+        b: params.backgroundStyle,
+        pm: params.presenterMode,
+        ps: params.productionStyle,
+        v: params.voiceIdentity,
+        pid: params.preferredPortraitId,
+        ov: params.beatTemplateOverrides || {},
+      })
+    )
+    .digest('hex');
+
+  const cachedEntry = RECENT_PLANS_CACHE.get(cacheKey);
+  if (cachedEntry && cachedEntry.expiresAt > Date.now()) {
+    return cachedEntry.value;
+  }
+
   const cues = splitScriptInto6Cues(params.title, params.scriptText);
   const prodStyleResolved = resolveProductionStyle({
     productionStyle: params.productionStyle,
     format: params.format,
+    genre: params.genre,
+    writingStyle: params.writingStyle,
     backgroundStyle: params.backgroundStyle,
     title: params.title,
     scriptText: params.scriptText,
   });
 
+  // Resolve active presenter FIRST so Gemini Vision Pass 1 & Pass 2 can inspect the portrait!
+  const presenter = await resolvePresenterSelection({
+    presenterMode: params.presenterMode,
+    voiceIdentity: params.voiceIdentity,
+    title: params.title,
+    scriptText: params.scriptText,
+    genre: params.genre,
+    mode: params.mode,
+    twinFaceImageAssets: params.twinFaceImageAssets,
+    preferredPortraitId: params.preferredPortraitId,
+  });
+
+  const presenterImagePath = presenter.presenterDiskPaths[0];
   const overallMood = inferMoodFromText(
     `${params.title} ${params.scriptText}`,
-    params.backgroundStyle
+    params.backgroundStyle,
+    params.genre
   );
 
-  const geminiPlan = await generateStoryboardViaGemini(
-    params.title,
+  // Stage 1: Gemini Vision inspects script context, metadata & presenter portrait to pick Prompt-Library presets
+  const visionPlan = await analyzeScriptAndSelectPromptLibraryViaGeminiVision({
+    title: params.title,
     cues,
-    params.backgroundStyle,
-    prodStyleResolved
-  );
-  const fallbackSpecs = fallbackQueriesForMood(overallMood, params.title, prodStyleResolved);
+    language: params.language,
+    format: params.format,
+    genre: params.genre,
+    writingStyle: params.writingStyle,
+    emotion: params.emotion,
+    backgroundStyle: params.backgroundStyle,
+    prodStyle: prodStyleResolved,
+    presenterLabel: presenter.presenterLabel,
+    presenterImagePath,
+    beatTemplateOverrides: params.beatTemplateOverrides,
+  });
+
+  const fallbackTemplates = selectFallbackTemplatesForScript(overallMood, prodStyleResolved);
 
   const rawBeats: SceneVisualBeat[] = cues.map((cue, idx) => {
-    const fb = fallbackSpecs[idx];
-    const spec = geminiPlan?.[idx] || {
-      headline: fb.headline,
-      searchQuery: fb.query,
-      themeMood: overallMood,
-      visualCardType: fb.visualCardType,
-      calloutText: fb.calloutText,
-      subBadge: fb.subBadge,
-      isPunchline: fb.isPunchline,
-    };
-    const palette = MOOD_PALETTES[spec.themeMood] || MOOD_PALETTES.studio_editorial;
+    const overrideTpl = getPromptTemplateById(params.beatTemplateOverrides?.[idx]);
+    const decision = visionPlan?.[idx];
+    const tpl =
+      overrideTpl ||
+      getPromptTemplateById(decision?.promptTemplateId) ||
+      fallbackTemplates[idx % fallbackTemplates.length];
+
+    const beatMood = tpl.themeMood || overallMood;
+    const palette = MOOD_PALETTES[beatMood] || MOOD_PALETTES.studio_editorial;
     const [startPct, endPct] = CUT_RANGES[idx];
+
     return {
       beatIndex: idx,
       startPct,
       endPct,
-      headline: spec.headline,
+      headline: overrideTpl ? overrideTpl.name.toUpperCase() : decision?.headline || tpl.name.toUpperCase(),
       spokenCue: cue.slice(0, 140),
-      searchQuery: spec.searchQuery,
-      themeMood: spec.themeMood,
+      searchQuery: overrideTpl
+        ? overrideTpl.clipKeywords[idx % overrideTpl.clipKeywords.length]
+        : decision?.searchQuery || tpl.clipKeywords[idx % tpl.clipKeywords.length],
+      themeMood: beatMood,
       bgHex: palette.bgHex,
-      accentHex: palette.accentHex,
-      visualCardType: spec.visualCardType,
-      calloutText: spec.calloutText,
-      subBadge: spec.subBadge,
-      isPunchline: spec.isPunchline,
+      accentHex: tpl.colorAccent || palette.accentHex,
+      visualCardType: tpl.visualCardType,
+      calloutText: overrideTpl ? overrideTpl.sampleCallout : decision?.calloutText || tpl.sampleCallout,
+      subBadge: overrideTpl ? overrideTpl.sampleSubBadge : decision?.subBadge || tpl.sampleSubBadge,
+      isPunchline:
+        overrideTpl
+          ? overrideTpl.cameraMotion === 'punch_zoom'
+          : decision?.isPunchline ?? (idx === 1 || idx === 3 || idx === 5),
+      promptTemplateId: tpl.id,
+      promptTemplateName: tpl.name,
+      motionGraphicPreset: tpl.motionGraphicPreset,
+      cameraMotion: tpl.cameraMotion,
+      visionRationale: overrideTpl
+        ? `Manual override: ${overrideTpl.name}`
+        : decision?.visionRationale || `${tpl.name} · matched to ${prodStyleResolved.replace('_', ' ')}`,
+      mediaKind: 'motion_graphic',
     };
   });
 
-  // Fetch & cache unique topic-matched photographs reliably across all 6 beats
+  // Fetch candidate media & run Gemini Vision Pass 2 candidate scoring concurrently across beats
   const usedUrls = new Set<string>();
   const resolvedDiskPaths: Array<string | undefined> = Array(6).fill(undefined);
 
   await Promise.all(
     rawBeats.map(async (beat, idx) => {
-      const primary = await fetchTopicPhotoCandidates(beat.searchQuery, beat.themeMood);
-      const fallback =
+      const tpl =
+        getPromptTemplateById(beat.promptTemplateId) || fallbackTemplates[idx % fallbackTemplates.length];
+
+      const primary = await fetchTopicMediaCandidates(beat.searchQuery, beat.themeMood);
+      const secondary =
         primary.length < 3
-          ? await fetchTopicPhotoCandidates(fallbackSpecs[idx].query, beat.themeMood)
+          ? await fetchTopicMediaCandidates(
+              tpl.clipKeywords[(idx + 1) % tpl.clipKeywords.length],
+              beat.themeMood
+            )
           : [];
-      const pool = Array.from(new Set([...primary, ...fallback]));
 
-      const orderedCandidates = [
-        ...pool.filter((u) => !usedUrls.has(u)),
-        ...pool.filter((u) => usedUrls.has(u)),
-      ];
+      const pool = [...primary, ...secondary];
+      const uniqueCands: CandidateAsset[] = [];
+      for (const c of pool) {
+        if (!usedUrls.has(c.url) && !uniqueCands.some((u) => u.url === c.url)) {
+          uniqueCands.push(c);
+        }
+      }
+      const ordered = uniqueCands.length > 0 ? uniqueCands : pool;
 
-      for (const cand of orderedCandidates.slice(0, 4)) {
-        usedUrls.add(cand);
-        const cached = await cacheImageLocally(cand, `${beat.searchQuery}_${cand}`, beat.themeMood);
-        if (cached) {
-          beat.imageUrl = cached.publicUrl;
-          resolvedDiskPaths[idx] = cached.localPath;
-          break;
+      // Download up to 3 top candidates to inspect visually via Gemini Vision Pass 2
+      const downloaded = (
+        await Promise.all(ordered.slice(0, 3).map((c) => downloadCandidateBuffer(c)))
+      ).filter((x): x is DownloadedMediaBuffer => Boolean(x));
+
+      if (downloaded.length > 0) {
+        const picked = await selectBestCandidateViaGeminiVision({
+          candidates: downloaded,
+          spokenCue: beat.spokenCue,
+          template: tpl,
+          presenterImagePath,
+        });
+        usedUrls.add(picked.chosen.url);
+        const cached = await persistDownloadedMedia(
+          picked.chosen,
+          `${beat.searchQuery}_${picked.chosen.url}`,
+          beat.themeMood
+        );
+        beat.imageUrl = cached.publicUrl;
+        beat.mediaKind = cached.mediaKind;
+        resolvedDiskPaths[idx] = cached.localPath;
+        if (picked.visionNote && !params.beatTemplateOverrides?.[idx]) {
+          beat.visionRationale = picked.visionNote;
         }
       }
     })
   );
 
-  // Backfill any remaining beats from local mood-tagged cache
+  // Backfill any beats without fetched network media using local mood-tagged cache
   const missingAny = rawBeats.some((b) => !b.imageUrl);
   if (missingAny) {
     try {
-      const files = (await fs.readdir(SCENE_CACHE_DIR)).filter((f) => /\.(jpe?g|png)$/i.test(f));
+      const files = (await fs.readdir(SCENE_CACHE_DIR)).filter((f) => /\.(jpe?g|png|gif)$/i.test(f));
       if (files.length > 0) {
         const usedLocal = new Set(resolvedDiskPaths.filter(Boolean).map((p) => path.basename(p!)));
         rawBeats.forEach((beat, idx) => {
@@ -1109,6 +997,7 @@ export async function planAndFetchScriptVisuals(params: {
             if (moodMatch) {
               usedLocal.add(moodMatch);
               beat.imageUrl = `/api/media/scenes/${moodMatch}`;
+              beat.mediaKind = /\.gif$/i.test(moodMatch) ? 'animated_clip' : 'curated_frame';
               resolvedDiskPaths[idx] = path.join(SCENE_CACHE_DIR, moodMatch);
             }
           }
@@ -1119,7 +1008,7 @@ export async function planAndFetchScriptVisuals(params: {
     }
   }
 
-  // Final sibling copy guard if any single beat still lacks an image
+  // Final sibling copy guard if cache directory had fewer images
   const firstCachedIdx = rawBeats.findIndex((b) => Boolean(b.imageUrl));
   if (firstCachedIdx !== -1) {
     rawBeats.forEach((beat, idx) => {
@@ -1128,29 +1017,30 @@ export async function planAndFetchScriptVisuals(params: {
         const donorDisk = resolvedDiskPaths[(idx + firstCachedIdx + 1) % rawBeats.length];
         if (donor.imageUrl) {
           beat.imageUrl = donor.imageUrl;
+          beat.mediaKind = donor.mediaKind;
           resolvedDiskPaths[idx] = donorDisk;
         } else {
           beat.imageUrl = rawBeats[firstCachedIdx].imageUrl;
+          beat.mediaKind = rawBeats[firstCachedIdx].mediaKind;
           resolvedDiskPaths[idx] = resolvedDiskPaths[firstCachedIdx];
         }
       }
     });
   }
 
-  const presenter = await resolvePresenterSelection({
-    presenterMode: params.presenterMode,
-    voiceIdentity: params.voiceIdentity,
-    title: params.title,
-    scriptText: params.scriptText,
-    mode: params.mode,
-    twinFaceImageAssets: params.twinFaceImageAssets,
-    preferredPortraitId: params.preferredPortraitId,
-  });
-
-  return {
+  const result: PlanVisualsResult = {
     beats: rawBeats,
     beatDiskPaths: resolvedDiskPaths,
     presenter,
     productionStyleResolved: prodStyleResolved,
+    visionAnalysisUsed: Boolean(visionPlan),
   };
+
+  if (RECENT_PLANS_CACHE.size >= 12) {
+    const oldestKey = RECENT_PLANS_CACHE.keys().next().value;
+    if (oldestKey) RECENT_PLANS_CACHE.delete(oldestKey);
+  }
+  RECENT_PLANS_CACHE.set(cacheKey, { expiresAt: Date.now() + 90_000, value: result });
+
+  return result;
 }
