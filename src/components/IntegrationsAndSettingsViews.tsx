@@ -2,45 +2,136 @@ import React, { useEffect, useState } from 'react';
 import {
   CheckCircle2,
   Download,
+  Eye,
+  EyeOff,
   Lock,
+  Play,
   RefreshCw,
   ShieldAlert,
   Trash2,
   X,
 } from 'lucide-react';
-import type { WorkspaceMode, WorkspaceState } from '../types';
+import type {
+  ConnectorAuthType,
+  ConnectorHttpMethod,
+  IntegrationConnector,
+  WorkspaceMode,
+  WorkspaceState,
+} from '../types';
 import { apiRequest, formatCurrency, formatDateShort } from '../lib/api';
 
 /* ============================================================================
- * INTEGRATIONS VIEW
+ * INTEGRATIONS VIEW (Direct Social Graph API + n8n-Style HTTP Node + Workers)
  * ============================================================================ */
+
+interface ConnectorDraft {
+  endpointUrl: string;
+  httpMethod: ConnectorHttpMethod;
+  authType: ConnectorAuthType;
+  authHeaderName: string;
+  apiToken: string;
+  accountId: string;
+  publicMediaBaseUrl: string;
+  customHeadersJson: string;
+  payloadTemplateJson: string;
+}
+
+function draftFromConnector(c: IntegrationConnector): ConnectorDraft {
+  return {
+    endpointUrl: c.endpointUrl || '',
+    httpMethod: c.httpMethod || 'POST',
+    authType: c.authType || 'none',
+    authHeaderName: c.authHeaderName || 'Authorization',
+    apiToken: c.apiToken || '',
+    accountId: c.accountId || '',
+    publicMediaBaseUrl: c.publicMediaBaseUrl || '',
+    customHeadersJson: c.customHeadersJson || '{}',
+    payloadTemplateJson:
+      c.payloadTemplateJson ||
+      '{\n  "event": "twinforge.publish",\n  "platform": "{{platform}}",\n  "title": "{{title}}",\n  "video_url": "{{videoUrl}}",\n  "caption": "{{caption}}",\n  "hashtags": "{{hashtags}}"\n}',
+  };
+}
+
+const TEMPLATE_TOKENS = [
+  '{{videoUrl}}',
+  '{{caption}}',
+  '{{hashtags}}',
+  '{{title}}',
+  '{{platform}}',
+  '{{aspectRatio}}',
+];
 
 export const IntegrationsView: React.FC<{
   workspace: WorkspaceState;
   mode: WorkspaceMode;
   onUpdateWorkspace: (w: WorkspaceState) => void;
 }> = ({ workspace, mode, onUpdateWorkspace }) => {
-  const [draftUrls, setDraftUrls] = useState<Record<string, string>>(
-    Object.fromEntries(workspace.integrations.map((i) => [i.id, i.endpointUrl || '']))
+  const [drafts, setDrafts] = useState<Record<string, ConnectorDraft>>(() =>
+    Object.fromEntries(workspace.integrations.map((i) => [i.id, draftFromConnector(i)]))
   );
+  const [showTokens, setShowTokens] = useState<Record<string, boolean>>({});
+  const [savingId, setSavingId] = useState<string | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [notice, setNotice] = useState('');
 
   useEffect(() => {
-    setDraftUrls(Object.fromEntries(workspace.integrations.map((i) => [i.id, i.endpointUrl || ''])));
+    setDrafts(Object.fromEntries(workspace.integrations.map((i) => [i.id, draftFromConnector(i)])));
   }, [workspace.integrations]);
 
-  const handleSave = async (id: string) => {
-    const updated = await apiRequest<WorkspaceState>(`/api/integrations/${id}`, mode, {
-      method: 'PUT',
-      body: JSON.stringify({ endpointUrl: draftUrls[id] || '' }),
-    });
-    onUpdateWorkspace(updated);
+  const updateDraft = (id: string, patch: Partial<ConnectorDraft>) => {
+    setDrafts((prev) => ({
+      ...prev,
+      [id]: { ...(prev[id] || ({} as ConnectorDraft)), ...patch },
+    }));
   };
 
-  const handleTest = async (id: string) => {
-    setTestingId(id);
+  const handleSave = async (conn: IntegrationConnector) => {
+    const d = drafts[conn.id] || draftFromConnector(conn);
+    setSavingId(conn.id);
+    setNotice('');
     try {
-      const updated = await apiRequest<WorkspaceState>(`/api/integrations/${id}/test`, mode, {
+      const updated = await apiRequest<WorkspaceState>(`/api/integrations/${conn.id}`, mode, {
+        method: 'PUT',
+        body: JSON.stringify({
+          endpointUrl: d.endpointUrl,
+          httpMethod: d.httpMethod,
+          authType: d.authType,
+          authHeaderName: d.authHeaderName,
+          apiToken: d.apiToken,
+          accountId: d.accountId,
+          publicMediaBaseUrl: d.publicMediaBaseUrl,
+          customHeadersJson: d.customHeadersJson,
+          payloadTemplateJson: d.payloadTemplateJson,
+        }),
+      });
+      onUpdateWorkspace(updated);
+      setNotice(`Saved configuration for ${conn.name}.`);
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const handleTest = async (conn: IntegrationConnector) => {
+    setTestingId(conn.id);
+    setNotice('');
+    try {
+      // Save latest unsaved draft edits before testing so immediate edits are tested live
+      const d = drafts[conn.id] || draftFromConnector(conn);
+      await apiRequest<WorkspaceState>(`/api/integrations/${conn.id}`, mode, {
+        method: 'PUT',
+        body: JSON.stringify({
+          endpointUrl: d.endpointUrl,
+          httpMethod: d.httpMethod,
+          authType: d.authType,
+          authHeaderName: d.authHeaderName,
+          apiToken: d.apiToken,
+          accountId: d.accountId,
+          publicMediaBaseUrl: d.publicMediaBaseUrl,
+          customHeadersJson: d.customHeadersJson,
+          payloadTemplateJson: d.payloadTemplateJson,
+        }),
+      });
+      const updated = await apiRequest<WorkspaceState>(`/api/integrations/${conn.id}/test`, mode, {
         method: 'POST',
       });
       onUpdateWorkspace(updated);
@@ -53,20 +144,40 @@ export const IntegrationsView: React.FC<{
     <div className="space-y-6">
       <div className="border-b border-[#E4DDD0] pb-6">
         <div className="text-[11px] font-mono uppercase tracking-[0.16em] text-[#B69A65] font-semibold">
-          Pluggable Provider Registry
+          Direct Social APIs · n8n HTTP Node · Pluggable Engines
         </div>
         <h1 className="font-editorial text-[34px] text-[#242421] mt-1">Integrations</h1>
         <p className="text-[14px] text-[#77766F] mt-1">
-          Modular adapters for voice cloning, neural lip-sync, local speech engines, n8n automation, and social
-          publishing. Zero silent downgrades.
+          Connect Instagram &amp; Facebook Graph API directly with tokens, configure custom n8n-style HTTP Request
+          Nodes (Method, Auth, Headers, JSON Payload), and verify external voice/avatar engines.
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {notice && (
+        <div className="p-3 bg-[#E9ECE4] border border-[#777D68]/40 text-[#242421] text-[13px] rounded-sm">
+          {notice}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {workspace.integrations.map((conn) => {
           const isInternal = conn.endpointUrl?.startsWith('server://') || conn.endpointUrl?.startsWith('local://');
+          const d = drafts[conn.id] || draftFromConnector(conn);
+          const isMetaGraph =
+            conn.nodeKind === 'instagram_graph' ||
+            conn.nodeKind === 'facebook_graph' ||
+            conn.id === 'instagram_direct' ||
+            conn.id === 'facebook_direct';
+          const isHttpNode = conn.nodeKind === 'http_node' || conn.id === 'n8n_http_node';
+          const tokenVisible = Boolean(showTokens[conn.id]);
+
           return (
-            <div key={conn.id} className="bg-[#FFFFFF] border border-[#E4DDD0] rounded-sm p-5 space-y-4">
+            <div
+              key={conn.id}
+              className={`bg-[#FFFFFF] border border-[#E4DDD0] rounded-sm p-5 space-y-4 ${
+                isHttpNode ? 'lg:col-span-2' : ''
+              }`}
+            >
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <div className="text-[11px] font-mono uppercase text-[#B69A65]">
@@ -75,7 +186,7 @@ export const IntegrationsView: React.FC<{
                   <h3 className="font-editorial text-[21px] text-[#242421] mt-0.5">{conn.name}</h3>
                 </div>
                 <span
-                  className={`text-[11px] font-mono uppercase font-semibold ${
+                  className={`text-[11px] font-mono uppercase font-semibold whitespace-nowrap shrink-0 ${
                     conn.status === 'connected' || conn.status === 'reachable'
                       ? 'text-[#777D68]'
                       : conn.status === 'unreachable'
@@ -89,45 +200,325 @@ export const IntegrationsView: React.FC<{
 
               <p className="text-[13px] text-[#77766F] leading-relaxed">{conn.description}</p>
 
-              <div className="text-[11.5px] font-mono text-[#242421]">
-                {conn.capabilities.join(' · ')}
-              </div>
+              <div className="text-[11.5px] font-mono text-[#242421]">{conn.capabilities.join(' · ')}</div>
 
-              <div className="pt-2 border-t border-[#E4DDD0] space-y-2">
-                {!isInternal ? (
-                  <div className="flex gap-2">
-                    <input
-                      type="url"
-                      value={draftUrls[conn.id] ?? conn.endpointUrl ?? ''}
-                      onChange={(e) => setDraftUrls({ ...draftUrls, [conn.id]: e.target.value })}
-                      placeholder="https://worker-or-webhook.example/..."
-                      className="flex-1 px-3 py-1.5 border border-[#E4DDD0] text-[12.5px] font-mono rounded-sm"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => handleSave(conn.id)}
-                      className="px-3 py-1.5 bg-[#242421] text-[#F6F3EC] text-[12px] font-semibold rounded-sm"
-                    >
-                      Save
-                    </button>
+              <div className="pt-3 border-t border-[#E4DDD0] space-y-3">
+                {isMetaGraph ? (
+                  <div className="space-y-3 bg-[#FAF8F4] border border-[#E4DDD0] p-3.5 rounded-sm">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#77766F] mb-1">
+                          {conn.id === 'instagram_direct'
+                            ? 'Instagram Business Account ID (IG_USER_ID)'
+                            : 'Facebook Page ID'}
+                        </label>
+                        <input
+                          type="text"
+                          value={d.accountId}
+                          onChange={(e) => updateDraft(conn.id, { accountId: e.target.value })}
+                          placeholder={conn.id === 'instagram_direct' ? '17841400000000000' : '102938475610293'}
+                          className="w-full px-3 py-1.5 border border-[#E4DDD0] bg-[#FFFFFF] text-[12.5px] font-mono rounded-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#77766F] mb-1">
+                          Public Video URL Origin (for Reels Fetch)
+                        </label>
+                        <input
+                          type="url"
+                          value={d.publicMediaBaseUrl}
+                          onChange={(e) => updateDraft(conn.id, { publicMediaBaseUrl: e.target.value })}
+                          placeholder="https://your-studio-domain.example"
+                          className="w-full px-3 py-1.5 border border-[#E4DDD0] bg-[#FFFFFF] text-[12.5px] font-mono rounded-sm"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#77766F] mb-1">
+                        Meta Graph API Access Token (v21.0)
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          type={tokenVisible ? 'text' : 'password'}
+                          value={d.apiToken}
+                          onChange={(e) => updateDraft(conn.id, { apiToken: e.target.value })}
+                          placeholder="EAAG..."
+                          className="flex-1 px-3 py-1.5 border border-[#E4DDD0] bg-[#FFFFFF] text-[12.5px] font-mono rounded-sm"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowTokens((p) => ({ ...p, [conn.id]: !p[conn.id] }))}
+                          className="px-2.5 py-1.5 border border-[#E4DDD0] bg-[#FFFFFF] text-[#77766F] hover:text-[#242421] rounded-sm"
+                          title={tokenVisible ? 'Hide Token' : 'Show Token'}
+                        >
+                          {tokenVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                      <span className="text-[11px] text-[#77766F] font-mono">
+                        Endpoint: {d.endpointUrl || 'https://graph.facebook.com/v21.0'}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={savingId === conn.id}
+                          onClick={() => void handleSave(conn)}
+                          className="px-3 py-1.5 bg-[#242421] text-[#F6F3EC] text-[12px] font-semibold rounded-sm whitespace-nowrap shrink-0"
+                        >
+                          {savingId === conn.id ? 'Saving...' : 'Save Credentials'}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={testingId === conn.id}
+                          onClick={() => void handleTest(conn)}
+                          className="px-3 py-1.5 bg-[#FFFFFF] border border-[#242421] text-[#242421] text-[12px] font-semibold rounded-sm inline-flex items-center gap-1.5 hover:bg-[#EFE8D8] whitespace-nowrap shrink-0"
+                        >
+                          <RefreshCw className={`w-3 h-3 ${testingId === conn.id ? 'animate-spin' : ''}`} />
+                          <span>Test Graph API</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : isHttpNode ? (
+                  <div className="space-y-3 bg-[#FAF8F4] border border-[#E4DDD0] p-4 rounded-sm">
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+                      <div className="md:col-span-2">
+                        <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#77766F] mb-1">
+                          Method
+                        </label>
+                        <select
+                          value={d.httpMethod}
+                          onChange={(e) =>
+                            updateDraft(conn.id, { httpMethod: e.target.value as ConnectorHttpMethod })
+                          }
+                          className="w-full px-2.5 py-1.5 border border-[#E4DDD0] bg-[#FFFFFF] text-[12.5px] font-mono rounded-sm"
+                        >
+                          <option value="POST">POST</option>
+                          <option value="PUT">PUT</option>
+                          <option value="PATCH">PATCH</option>
+                          <option value="GET">GET</option>
+                        </select>
+                      </div>
+                      <div className="md:col-span-10">
+                        <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#77766F] mb-1">
+                          HTTP Request URL (n8n Webhook / Custom Social API Endpoint)
+                        </label>
+                        <input
+                          type="url"
+                          value={d.endpointUrl}
+                          onChange={(e) => updateDraft(conn.id, { endpointUrl: e.target.value })}
+                          placeholder="https://n8n.yourdomain.com/webhook/instagram-publish"
+                          className="w-full px-3 py-1.5 border border-[#E4DDD0] bg-[#FFFFFF] text-[12.5px] font-mono rounded-sm"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+                      <div className="md:col-span-3">
+                        <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#77766F] mb-1">
+                          Authentication
+                        </label>
+                        <select
+                          value={d.authType}
+                          onChange={(e) =>
+                            updateDraft(conn.id, { authType: e.target.value as ConnectorAuthType })
+                          }
+                          className="w-full px-2.5 py-1.5 border border-[#E4DDD0] bg-[#FFFFFF] text-[12.5px] rounded-sm"
+                        >
+                          <option value="none">None</option>
+                          <option value="bearer">Bearer Token</option>
+                          <option value="header_key">Header API Key</option>
+                          <option value="query_token">Query Param Token</option>
+                          <option value="basic">Basic Auth</option>
+                        </select>
+                      </div>
+                      <div className="md:col-span-3">
+                        <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#77766F] mb-1">
+                          Header / Query Name
+                        </label>
+                        <input
+                          type="text"
+                          value={d.authHeaderName}
+                          onChange={(e) => updateDraft(conn.id, { authHeaderName: e.target.value })}
+                          disabled={d.authType === 'none' || d.authType === 'bearer' || d.authType === 'basic'}
+                          placeholder={d.authType === 'query_token' ? 'access_token' : 'X-API-Key'}
+                          className="w-full px-3 py-1.5 border border-[#E4DDD0] bg-[#FFFFFF] text-[12.5px] font-mono rounded-sm disabled:opacity-50"
+                        />
+                      </div>
+                      <div className="md:col-span-6">
+                        <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#77766F] mb-1">
+                          API Token / Secret Key
+                        </label>
+                        <div className="flex gap-2">
+                          <input
+                            type={tokenVisible ? 'text' : 'password'}
+                            value={d.apiToken}
+                            onChange={(e) => updateDraft(conn.id, { apiToken: e.target.value })}
+                            disabled={d.authType === 'none'}
+                            placeholder="Paste Bearer / API Key / Basic credentials..."
+                            className="flex-1 px-3 py-1.5 border border-[#E4DDD0] bg-[#FFFFFF] text-[12.5px] font-mono rounded-sm disabled:opacity-50"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowTokens((p) => ({ ...p, [conn.id]: !p[conn.id] }))}
+                            className="px-2.5 py-1.5 border border-[#E4DDD0] bg-[#FFFFFF] text-[#77766F] hover:text-[#242421] rounded-sm"
+                          >
+                            {tokenVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#77766F] mb-1">
+                          Custom Headers (JSON)
+                        </label>
+                        <textarea
+                          rows={4}
+                          value={d.customHeadersJson}
+                          onChange={(e) => updateDraft(conn.id, { customHeadersJson: e.target.value })}
+                          className="w-full px-3 py-2 border border-[#E4DDD0] bg-[#FFFFFF] text-[11.5px] font-mono rounded-sm"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#77766F]">
+                            JSON Body Template (for POST/PUT/PATCH)
+                          </label>
+                        </div>
+                        <textarea
+                          rows={4}
+                          value={d.payloadTemplateJson}
+                          onChange={(e) => updateDraft(conn.id, { payloadTemplateJson: e.target.value })}
+                          className="w-full px-3 py-2 border border-[#E4DDD0] bg-[#FFFFFF] text-[11.5px] font-mono rounded-sm"
+                        />
+                        <div className="mt-1 flex flex-wrap gap-1.5">
+                          {TEMPLATE_TOKENS.map((tok) => (
+                            <button
+                              key={tok}
+                              type="button"
+                              onClick={() =>
+                                updateDraft(conn.id, {
+                                  payloadTemplateJson: `${d.payloadTemplateJson}${d.payloadTemplateJson.endsWith('\n') ? '' : '\n'}${tok}`,
+                                })
+                              }
+                              className="text-[10px] font-mono text-[#8A5A1A] hover:underline"
+                            >
+                              {tok}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                      <span className="text-[11px] text-[#77766F]">
+                        Supports full template substitution during Publishing dispatch &amp; live test ping.
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={savingId === conn.id}
+                          onClick={() => void handleSave(conn)}
+                          className="px-3.5 py-1.5 bg-[#242421] text-[#F6F3EC] text-[12px] font-semibold rounded-sm whitespace-nowrap shrink-0"
+                        >
+                          {savingId === conn.id ? 'Saving...' : 'Save HTTP Node'}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={testingId === conn.id}
+                          onClick={() => void handleTest(conn)}
+                          className="px-3.5 py-1.5 bg-[#FFFFFF] border border-[#242421] text-[#242421] text-[12px] font-semibold rounded-sm inline-flex items-center gap-1.5 hover:bg-[#EFE8D8] whitespace-nowrap shrink-0"
+                        >
+                          <Play className="w-3 h-3 text-[#B69A65]" />
+                          <span>{testingId === conn.id ? 'Executing...' : 'Execute Test Request'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : !isInternal ? (
+                  <div className="space-y-2.5">
+                    <div className="flex gap-2">
+                      <input
+                        type="url"
+                        value={d.endpointUrl}
+                        onChange={(e) => updateDraft(conn.id, { endpointUrl: e.target.value })}
+                        placeholder="https://worker-or-webhook.example/..."
+                        className="flex-1 px-3 py-1.5 border border-[#E4DDD0] text-[12.5px] font-mono rounded-sm"
+                      />
+                      <button
+                        type="button"
+                        disabled={savingId === conn.id}
+                        onClick={() => void handleSave(conn)}
+                        className="px-3 py-1.5 bg-[#242421] text-[#F6F3EC] text-[12px] font-semibold rounded-sm whitespace-nowrap shrink-0"
+                      >
+                        Save
+                      </button>
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type={tokenVisible ? 'text' : 'password'}
+                        value={d.apiToken}
+                        onChange={(e) => updateDraft(conn.id, { apiToken: e.target.value })}
+                        placeholder="Optional Bearer / API Key Token..."
+                        className="flex-1 px-3 py-1.5 border border-[#E4DDD0] text-[12px] font-mono rounded-sm"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowTokens((p) => ({ ...p, [conn.id]: !p[conn.id] }))}
+                        className="px-2.5 py-1.5 border border-[#E4DDD0] text-[#77766F] hover:text-[#242421] rounded-sm"
+                      >
+                        {tokenVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
                   </div>
                 ) : (
-                  <div className="text-[12px] font-mono text-[#77766F]">
-                    Server Runtime: {conn.endpointUrl}
+                  <div className="text-[12px] font-mono text-[#77766F]">Server Runtime: {conn.endpointUrl}</div>
+                )}
+
+                {conn.lastTestResult && (
+                  <div
+                    className={`p-3 border rounded-sm text-[11.5px] font-mono space-y-1 ${
+                      conn.lastTestResult.ok
+                        ? 'bg-[#E9ECE4]/70 border-[#777D68]/50 text-[#242421]'
+                        : 'bg-[#9E3B33]/10 border-[#9E3B33]/30 text-[#9E3B33]'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2 font-semibold">
+                      <span>
+                        {conn.lastTestResult.ok ? 'TEST PASSED' : 'TEST FAILED'}
+                        {conn.lastTestResult.statusCode ? ` · HTTP ${conn.lastTestResult.statusCode}` : ''}
+                      </span>
+                      <span className="text-[10.5px] text-[#77766F]">
+                        {formatDateShort(conn.lastTestResult.testedAt)}
+                      </span>
+                    </div>
+                    <div>{conn.lastTestResult.message}</div>
+                    {conn.lastTestResult.responsePreview && (
+                      <pre className="text-[10.5px] text-[#77766F] bg-[#FFFFFF] border border-[#E4DDD0] p-2 rounded-sm overflow-x-auto max-h-24">
+                        {conn.lastTestResult.responsePreview}
+                      </pre>
+                    )}
                   </div>
                 )}
 
                 <div className="flex items-center justify-between text-[11.5px] text-[#77766F]">
-                  <span>{conn.notes}</span>
-                  <button
-                    type="button"
-                    disabled={testingId === conn.id}
-                    onClick={() => handleTest(conn.id)}
-                    className="inline-flex items-center gap-1 font-semibold text-[#242421] hover:text-[#B69A65] shrink-0 ml-2"
-                  >
-                    <RefreshCw className={`w-3 h-3 ${testingId === conn.id ? 'animate-spin' : ''}`} />
-                    <span>Verify</span>
-                  </button>
+                  <span className="truncate">{conn.notes}</span>
+                  {!isMetaGraph && !isHttpNode && (
+                    <button
+                      type="button"
+                      disabled={testingId === conn.id}
+                      onClick={() => void handleTest(conn)}
+                      className="inline-flex items-center gap-1 font-semibold text-[#242421] hover:text-[#B69A65] shrink-0 ml-2 whitespace-nowrap"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${testingId === conn.id ? 'animate-spin' : ''}`} />
+                      <span>Verify</span>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

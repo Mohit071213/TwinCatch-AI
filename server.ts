@@ -6,13 +6,21 @@ import { XMLParser } from 'fast-xml-parser';
 import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
 import type {
+  AnimationPresetMode,
+  ColorGradePreset,
+  ConnectorAuthType,
+  ConnectorHttpMethod,
   CostEstimate,
   FaceCategory,
+  IntegrationConnector,
   PresenterVisualMode,
   ProductionStyle,
+  PublishingDraft,
   QualityTier,
   RewriteAction,
   ScriptGenre,
+  ShootingAnglePreset,
+  TransitionStylePreset,
   TrendCategory,
   TrendItem,
   TwinLanguage,
@@ -95,9 +103,8 @@ function estimateJobCost(
   const mins = Math.max(0.5, durationSec / 60);
 
   let voiceRate = 0;
-  if (voiceProvider === 'gemini_lite_tts') voiceRate = 0.015;
-  else if (voiceProvider === 'gemini_flash_tts') voiceRate = 0.03;
-  else if (voiceProvider === 'elevenlabs_webhook') voiceRate = 0.18;
+  // Standard Gemini 3.8 TTS models (Lite & Flash) run on free-tier eligible standard GEMINI_API_KEY
+  if (voiceProvider === 'elevenlabs_webhook') voiceRate = 0.18;
 
   let visualRate = 0;
   if (visualProvider === 'gemini_omni_veo') visualRate = 0.45;
@@ -120,7 +127,7 @@ function estimateJobCost(
     (state.settings.requireExplicitPaidApproval && estimatedTotalUsd > 0);
 
   let qualityAdvisory =
-    'Balanced Mode uses expressive Gemini 3.8 TTS voice audition combined with Multi-Scene FFmpeg Motion Director (>=30s).';
+    'Gemini 3.8 TTS (Free Tier Eligible) paired with Cinema Multi-Scene FFmpeg Motion Director (>=30s).';
   let recommendedUpgradeTier: QualityTier | undefined;
   let recommendedUpgradeReason: string | undefined;
 
@@ -128,16 +135,18 @@ function estimateJobCost(
     const freeVoiceLabel =
       voiceProvider === 'free_hindi_neural'
         ? 'Free Natural Hindi / Indian Neural Voice ($0.00)'
-        : 'Free Studio Audio ($0.00)';
+        : voiceProvider === 'gemini_lite_tts' || voiceProvider === 'gemini_flash_tts'
+          ? 'Free-Tier Gemini 3.8 Speech Persona ($0.00)'
+          : 'Free Studio Audio ($0.00)';
     qualityAdvisory =
       visualProvider === 'free_canvas_animator'
-        ? `${freeVoiceLabel} + Free Live Motion Animator active — 30fps facial crossfades, camera cuts, waveform, and >=30s captions at $0.00 cost.`
+        ? `${freeVoiceLabel} + Cinema Canvas Director active — layered DoF frames, shooting angles, LUT grading, waveform, and >=30s captions at $0.00 cost.`
         : visualProvider === 'free_hf_space'
           ? `${freeVoiceLabel} + Hugging Face ZeroGPU Space adapter selected. Ensure your Gradio Space URL is connected in Integrations.`
-          : `${freeVoiceLabel} + 6-Shot FFmpeg Motion Director active — renders minimum 30s dynamic camera cuts, xfade transitions, waveform, and subtitles at $0.00 cost.`;
+          : `${freeVoiceLabel} + 6-Shot FFmpeg Cinema Director active — renders minimum 30s multi-angle cuts, LUT color grades, xfade transitions, and subtitles at $0.00 cost.`;
   } else if (qualityTier === 'balanced' && isFreeVisual) {
     qualityAdvisory =
-      'Balanced Mode pairs expressive Gemini 3.8 TTS voiceover with multi-scene motion cuts (>=30s) and audio-reactive studio animation. Upgrade to Premium Realism for generative Veo 3D head motion.';
+      'Balanced Mode pairs expressive Gemini 3.8 TTS voiceover (Free-Tier Gemini API Eligible) with multi-angle cinema cuts (>=30s). Upgrade to Premium Realism only when generative Veo 3D head motion is needed.';
     recommendedUpgradeTier = 'premium';
     recommendedUpgradeReason =
       'Upgrade to Premium Realism (Gemini Omni / Veo or LivePortrait) when photorealistic 3D generative facial motion is required.';
@@ -159,6 +168,71 @@ function estimateJobCost(
     recommendedUpgradeTier,
     recommendedUpgradeReason,
   };
+}
+
+function buildHttpNodeRequestConfig(connector: IntegrationConnector): {
+  url: string;
+  headers: Record<string, string>;
+  method: ConnectorHttpMethod;
+} {
+  let url = (connector.endpointUrl || '').trim();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  if (connector.customHeadersJson?.trim()) {
+    try {
+      const parsed = JSON.parse(connector.customHeadersJson);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        for (const [k, v] of Object.entries(parsed)) {
+          if (k.trim() && v !== undefined && v !== null) {
+            headers[k.trim()] = String(v);
+          }
+        }
+      }
+    } catch {
+      // Keep default headers if custom JSON is malformed
+    }
+  }
+
+  const token = (connector.apiToken || '').trim();
+  const authType: ConnectorAuthType = connector.authType || 'bearer';
+  const authHeaderName = (connector.authHeaderName || 'Authorization').trim() || 'Authorization';
+
+  if (token) {
+    if (authType === 'bearer') {
+      headers[authHeaderName] = token.toLowerCase().startsWith('bearer ') ? token : `Bearer ${token}`;
+    } else if (authType === 'header_key') {
+      headers[authHeaderName] = token;
+    } else if (authType === 'basic') {
+      headers[authHeaderName] = token.toLowerCase().startsWith('basic ')
+        ? token
+        : `Basic ${Buffer.from(token).toString('base64')}`;
+    } else if (authType === 'query_token' && url) {
+      const sep = url.includes('?') ? '&' : '?';
+      url = `${url}${sep}${encodeURIComponent(authHeaderName)}=${encodeURIComponent(token)}`;
+    }
+  }
+
+  return {
+    url,
+    headers,
+    method: connector.httpMethod || 'POST',
+  };
+}
+
+function renderHttpNodePayload(
+  templateJson: string | undefined,
+  vars: Record<string, string>
+): string {
+  const raw = (templateJson || '').trim();
+  if (!raw) {
+    return JSON.stringify(vars);
+  }
+  return raw.replace(/\{\{(\w+)\}\}/g, (_match, key) => {
+    const val = vars[key] ?? '';
+    return val.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+  });
 }
 
 function scoreNicheRelevance(text: string, niche: string): number {
@@ -338,6 +412,31 @@ async function startServer() {
       res.json(await writeWorkspace(mode, state));
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Voice transcription failed.' });
+    }
+  });
+
+  app.post('/api/twin/verify-voice/:id', async (req, res) => {
+    try {
+      const mode = resolveMode(req);
+      const state = await readWorkspace(mode);
+      const sample = state.twin.voiceSamples.find((v) => v.id === req.params.id);
+      if (!sample) return res.status(404).json({ error: 'Voice sample not found.' });
+      const manualTranscript = String(req.body?.transcript || '').trim();
+      if (manualTranscript) {
+        sample.transcript = manualTranscript;
+      } else if (!sample.transcript) {
+        sample.transcript = `Verified studio voice reference (${sample.language} · ${sample.emotion})`;
+      }
+      sample.verified = true;
+      appendAuditLog(state, {
+        actor: state.twin.personality.creatorName || 'Creator',
+        category: 'identity',
+        action: 'Voice Sample Verified',
+        detail: `Creator verified "${sample.label}" (${sample.language}).`,
+      });
+      res.json(await writeWorkspace(mode, state));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Voice verification failed.' });
     }
   });
 
@@ -982,16 +1081,9 @@ async function startServer() {
 
       const durationSec = (await getMediaDurationSec(outPath)) || Math.max(3, Math.round(text.split(/\s+/).length / 2.3));
       const estCost =
-        resolvedProvider === 'free_hindi_neural' ||
-        resolvedProvider === 'kokoro_local' ||
-        resolvedProvider === 'piper_local' ||
-        resolvedProvider === 'ambient_studio'
-          ? 0
-          : resolvedProvider === 'elevenlabs_webhook'
-            ? Number(((durationSec / 60) * 0.18).toFixed(4))
-            : resolvedProvider === 'gemini_flash_tts'
-              ? Number(((durationSec / 60) * 0.03).toFixed(4))
-              : Number(((durationSec / 60) * 0.015).toFixed(4));
+        resolvedProvider === 'elevenlabs_webhook'
+          ? Number(((durationSec / 60) * 0.18).toFixed(4))
+          : 0;
 
       const providerLabel =
         resolvedProvider === 'free_hindi_neural'
@@ -1081,6 +1173,7 @@ async function startServer() {
         backgroundStyle,
         presenterMode,
         productionStyle,
+        shootingAngle,
         voiceIdentity,
         portraitAssetId,
         beatTemplateOverrides,
@@ -1095,6 +1188,7 @@ async function startServer() {
         backgroundStyle?: string;
         presenterMode?: PresenterVisualMode;
         productionStyle?: ProductionStyle;
+        shootingAngle?: ShootingAnglePreset;
         voiceIdentity?: string;
         portraitAssetId?: string;
         beatTemplateOverrides?: Record<string, string>;
@@ -1129,6 +1223,7 @@ async function startServer() {
         backgroundStyle: backgroundStyle || 'Auto-Match Script Theme',
         presenterMode: presenterMode || 'auto_match',
         productionStyle: productionStyle || 'auto_genre',
+        shootingAngle: shootingAngle || 'auto_director',
         voiceIdentity: voiceIdentity || state.twin.personality.preferredVoiceId,
         mode,
         twinFaceImageAssets: imageAssets,
@@ -1257,6 +1352,7 @@ async function startServer() {
         backgroundStyle: backgroundStyle || 'Auto-Match Script Theme',
         presenterMode: (req.body as any).presenterMode || 'auto_match',
         productionStyle: (req.body as any).productionStyle || 'auto_genre',
+        shootingAngle: ((req.body as any).shootingAngle as ShootingAnglePreset) || 'auto_director',
         voiceIdentity: voiceIdentity || state.twin.personality.preferredVoiceId,
         mode,
         twinFaceImageAssets: twinFaceImgAssets,
@@ -1409,12 +1505,21 @@ async function startServer() {
         }
         const sceneImagePaths = plannedVisuals.presenter.presenterDiskPaths;
         const sceneBackgroundPaths = plannedVisuals.beatDiskPaths.filter((p): p is string => Boolean(p));
+        const requestedAngle: ShootingAnglePreset = (req.body as any).shootingAngle || 'auto_director';
+        const requestedGrade: ColorGradePreset = (req.body as any).colorGrade || 'teal_amber_cinema';
+        const requestedAnimMode: AnimationPresetMode = (req.body as any).animationMode || 'cinematic_layered';
+        const requestedTransition: TransitionStylePreset = (req.body as any).transitionStyle || 'whip_pan';
+
         const rendered = await renderTwinVideoFFmpeg({
           portraitPath,
           sceneImagePaths,
           sceneBackgroundPaths,
           presenterMode: plannedVisuals.presenter.presenterModeResolved,
           productionStyle: plannedVisuals.productionStyleResolved,
+          shootingAngle: requestedAngle,
+          colorGrade: requestedGrade,
+          animationMode: requestedAnimMode,
+          transitionStyle: requestedTransition,
           beatOverlays: plannedVisuals.beats.map((b) => ({
             headline: b.headline,
             calloutText: b.calloutText,
@@ -1422,6 +1527,7 @@ async function startServer() {
             isPunchline: b.isPunchline,
             motionGraphicPreset: b.motionGraphicPreset,
             cameraMotion: b.cameraMotion,
+            shootingAngle: b.shootingAngle,
             colorAccent: b.accentHex,
             startPct: b.startPct,
             endPct: b.endPct,
@@ -1446,8 +1552,10 @@ async function startServer() {
           qualityTier === 'local_free'
             ? voiceProvider === 'free_hindi_neural'
               ? `Free Natural Hindi Neural (${voiceIdentity || 'Andrew'}) · ${plannedVisuals.productionStyleResolved.replace('_', ' ')}${visionTag} ($0.00)`
-              : `Free 6-Shot ${plannedVisuals.productionStyleResolved.replace('_', ' ')} Director${visionTag} ($0.00)`
-            : `Balanced Mode · ${plannedVisuals.productionStyleResolved.replace('_', ' ')}${visionTag}`;
+              : voiceProvider === 'gemini_lite_tts' || voiceProvider === 'gemini_flash_tts'
+                ? `Free-Tier Gemini 3.8 TTS (${voiceIdentity || 'Kore'}) · ${plannedVisuals.productionStyleResolved.replace('_', ' ')}${visionTag} ($0.00)`
+                : `Free 6-Shot ${plannedVisuals.productionStyleResolved.replace('_', ' ')} Cinema Director${visionTag} ($0.00)`
+            : `Balanced Cinema Mode · ${plannedVisuals.productionStyleResolved.replace('_', ' ')}${visionTag}`;
       }
 
       const processingMs = Date.now() - startMs;
@@ -1460,7 +1568,7 @@ async function startServer() {
         trendTopic: trendTopic || 'Custom Studio Script',
         qualityTier: qualityTier || 'balanced',
         voiceProvider,
-        voiceIdentity: voiceIdentity || 'Charon',
+        voiceIdentity: voiceIdentity || 'Kore',
         visualProvider,
         aspectRatio: aspectRatio || '9:16',
         format: format || 'Talking-Head',
@@ -1470,6 +1578,10 @@ async function startServer() {
         backgroundStyle: backgroundStyle || 'Auto-Match Script Theme',
         presenterMode: plannedVisuals.presenter.presenterModeResolved,
         productionStyle: plannedVisuals.productionStyleResolved,
+        shootingAngle: ((req.body as any).shootingAngle as ShootingAnglePreset) || 'auto_director',
+        colorGrade: ((req.body as any).colorGrade as ColorGradePreset) || 'teal_amber_cinema',
+        animationMode: ((req.body as any).animationMode as AnimationPresetMode) || 'cinematic_layered',
+        transitionStyle: ((req.body as any).transitionStyle as TransitionStylePreset) || 'whip_pan',
         wardrobeNote: wardrobeNote || 'Studio Attire',
         speakingSpeed: Number(speakingSpeed) || 1.0,
         voiceIntensity: voiceIntensity || 'Balanced',
@@ -1572,6 +1684,10 @@ async function startServer() {
         backgroundStyle: meta.backgroundStyle || 'Auto-Match Script Theme',
         presenterMode: (meta.presenterMode as PresenterVisualMode) || 'auto_match',
         productionStyle: (meta.productionStyle as ProductionStyle) || 'auto_genre',
+        shootingAngle: (meta.shootingAngle as ShootingAnglePreset) || 'auto_director',
+        colorGrade: (meta.colorGrade as ColorGradePreset) || 'teal_amber_cinema',
+        animationMode: (meta.animationMode as AnimationPresetMode) || 'cinematic_layered',
+        transitionStyle: (meta.transitionStyle as TransitionStylePreset) || 'whip_pan',
         wardrobeNote: meta.wardrobeNote || 'Studio Attire',
         speakingSpeed: Number(meta.speakingSpeed) || 1.0,
         voiceIntensity: (meta.voiceIntensity as any) || 'Balanced',
@@ -2006,39 +2122,192 @@ async function startServer() {
         return res.status(400).json({ error: 'Human approval is required before dispatching to publishing connectors.' });
       }
 
+      const targetConnectorId = req.body?.targetConnectorId as string | undefined;
+      const igConnector = state.integrations.find((i) => i.id === 'instagram_direct');
+      const fbConnector = state.integrations.find((i) => i.id === 'facebook_direct');
+      const httpNode = state.integrations.find((i) => i.id === 'n8n_http_node');
       const socialConnector = state.integrations.find((i) => i.id === 'social_graph_connector');
       const n8nConnector = state.integrations.find((i) => i.id === 'n8n_webhook');
-      const targetUrl = socialConnector?.endpointUrl || n8nConnector?.endpointUrl;
 
-      if (!targetUrl) {
+      const chosenConnector =
+        (targetConnectorId ? state.integrations.find((i) => i.id === targetConnectorId) : undefined) ||
+        (draft.platform.toLowerCase().includes('instagram') && igConnector?.configured ? igConnector : undefined) ||
+        (draft.platform.toLowerCase().includes('facebook') && fbConnector?.configured ? fbConnector : undefined) ||
+        (httpNode?.configured ? httpNode : undefined) ||
+        (socialConnector?.endpointUrl ? socialConnector : undefined) ||
+        (n8nConnector?.endpointUrl ? n8nConnector : undefined);
+
+      const reqOrigin = `${req.headers['x-forwarded-proto'] || req.protocol}://${req.headers['x-forwarded-host'] || req.get('host')}`;
+      const captionFull = `${draft.caption}\n\n${draft.hashtags.join(' ')}`.trim();
+
+      if (!chosenConnector || (!chosenConnector.endpointUrl && !chosenConnector.apiToken)) {
         draft.publishStatus = 'scheduled';
         draft.statusNote =
-          'No live publishing webhook configured. Kept as Scheduled Draft (never falsely marked Published).';
+          'No Instagram/Facebook Token or n8n HTTP Node URL configured yet. Kept as Scheduled Draft (never falsely marked Published).';
         return res.json(await writeWorkspace(mode, state));
       }
 
-      const resp = await fetch(targetUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(draft),
-      });
+      if (chosenConnector.id === 'instagram_direct') {
+        const igUserId = (chosenConnector.accountId || '').trim();
+        const token = (chosenConnector.apiToken || '').trim();
+        if (!igUserId || !token) {
+          return res.status(400).json({
+            error: 'Instagram Business Account ID and Meta Access Token are required in Publishing or Integrations.',
+          });
+        }
+        const mediaBase = (chosenConnector.publicMediaBaseUrl || reqOrigin).replace(/\/+$/, '');
+        const publicVideoUrl = `${mediaBase}${draft.videoUrl}`;
+        if (/localhost|127\.0\.0\.1|0\.0\.0\.0/.test(publicVideoUrl) && !chosenConnector.publicMediaBaseUrl) {
+          draft.publishStatus = 'failed';
+          draft.statusNote =
+            'Instagram Graph API requires a public HTTPS video URL to fetch MP4 bytes. Open the Instagram Direct Connector drawer and set Public Media Base URL (or run via your *.run.app preview URL).';
+          return res.json(await writeWorkspace(mode, state));
+        }
 
-      if (resp.ok) {
-        const receipt = `rcpt_${crypto.randomUUID().slice(0, 8)}`;
-        draft.publishStatus = 'published';
-        draft.receiptId = receipt;
-        draft.receiptConfirmedAt = new Date().toISOString();
-        draft.statusNote = `Confirmed delivery receipt ${receipt} from external publisher.`;
+        const createUrl = `https://graph.facebook.com/v21.0/${encodeURIComponent(igUserId)}/media`;
+        const createResp = await fetch(createUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            media_type: 'REELS',
+            video_url: publicVideoUrl,
+            caption: captionFull,
+            access_token: token,
+          }),
+          signal: AbortSignal.timeout(15000),
+        });
+        const createData: any = await createResp.json().catch(() => ({}));
+        if (!createResp.ok || !createData?.id) {
+          draft.publishStatus = 'failed';
+          draft.statusNote = `Instagram Graph API container error (HTTP ${createResp.status}): ${createData?.error?.message || JSON.stringify(createData).slice(0, 180)}`;
+        } else {
+          // Allow brief processing delay then publish container
+          await new Promise((r) => setTimeout(r, 1500));
+          const pubUrl = `https://graph.facebook.com/v21.0/${encodeURIComponent(igUserId)}/media_publish`;
+          const pubResp = await fetch(pubUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              creation_id: createData.id,
+              access_token: token,
+            }),
+            signal: AbortSignal.timeout(15000),
+          });
+          const pubData: any = await pubResp.json().catch(() => ({}));
+          if (pubResp.ok && pubData?.id) {
+            draft.publishStatus = 'published';
+            draft.receiptId = String(pubData.id);
+            draft.receiptConfirmedAt = new Date().toISOString();
+            draft.statusNote = `Published to Instagram Reels via Graph API (Media ID: ${pubData.id}).`;
+          } else {
+            draft.publishStatus = 'scheduled';
+            draft.receiptId = String(createData.id);
+            draft.statusNote = `Instagram container created (${createData.id}); Graph publish status: ${pubData?.error?.message || `HTTP ${pubResp.status} (container still processing on Meta)`}.`;
+          }
+        }
+      } else if (chosenConnector.id === 'facebook_direct') {
+        const pageId = (chosenConnector.accountId || '').trim();
+        const token = (chosenConnector.apiToken || '').trim();
+        if (!pageId || !token) {
+          return res.status(400).json({
+            error: 'Facebook Page ID and Page Access Token are required in Publishing or Integrations.',
+          });
+        }
+        const mediaBase = (chosenConnector.publicMediaBaseUrl || reqOrigin).replace(/\/+$/, '');
+        const publicVideoUrl = `${mediaBase}${draft.videoUrl}`;
+        const fbUrl = `https://graph.facebook.com/v21.0/${encodeURIComponent(pageId)}/videos`;
+        const fbResp = await fetch(fbUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            file_url: publicVideoUrl,
+            title: draft.videoTitle,
+            description: captionFull,
+            access_token: token,
+          }),
+          signal: AbortSignal.timeout(15000),
+        });
+        const fbData: any = await fbResp.json().catch(() => ({}));
+        if (fbResp.ok && fbData?.id) {
+          draft.publishStatus = 'published';
+          draft.receiptId = String(fbData.id);
+          draft.receiptConfirmedAt = new Date().toISOString();
+          draft.statusNote = `Published to Facebook Page via Graph API (Video ID: ${fbData.id}).`;
+        } else {
+          draft.publishStatus = 'failed';
+          draft.statusNote = `Facebook Graph API error (HTTP ${fbResp.status}): ${fbData?.error?.message || JSON.stringify(fbData).slice(0, 180)}`;
+        }
       } else {
-        draft.publishStatus = 'failed';
-        draft.statusNote = `Publisher returned HTTP ${resp.status}; post was not published.`;
+        // Configurable n8n HTTP Request Node / Custom Webhook Bridge
+        const { url, headers, method } = buildHttpNodeRequestConfig(chosenConnector);
+        if (!url) {
+          draft.publishStatus = 'scheduled';
+          draft.statusNote = 'HTTP Node Endpoint URL is blank. Saved as Scheduled Draft.';
+          return res.json(await writeWorkspace(mode, state));
+        }
+
+        const mediaBase = (chosenConnector.publicMediaBaseUrl || reqOrigin).replace(/\/+$/, '');
+        const vars = {
+          id: draft.id,
+          title: draft.videoTitle,
+          platform: draft.platform,
+          videoUrl: `${mediaBase}${draft.videoUrl}`,
+          thumbnailUrl: `${mediaBase}${draft.thumbnailUrl}`,
+          caption: draft.caption,
+          hashtags: draft.hashtags.join(' '),
+          aspectRatio: draft.aspectRatio,
+          scheduledFor: draft.scheduledFor,
+        };
+        const bodyStr =
+          method === 'GET'
+            ? undefined
+            : chosenConnector.id === 'n8n_http_node'
+              ? renderHttpNodePayload(chosenConnector.payloadTemplateJson, vars)
+              : JSON.stringify({ ...draft, publicVideoUrl: vars.videoUrl });
+
+        const resp = await fetch(url, {
+          method,
+          headers,
+          body: bodyStr,
+          signal: AbortSignal.timeout(12000),
+        });
+        const respPreview = (await resp.text().catch(() => '')).slice(0, 180);
+
+        if (resp.ok) {
+          const receipt = `http_${crypto.randomUUID().slice(0, 8)}`;
+          draft.publishStatus = 'published';
+          draft.receiptId = receipt;
+          draft.receiptConfirmedAt = new Date().toISOString();
+          draft.statusNote = `HTTP ${resp.status} confirmed via ${chosenConnector.name} (${receipt})${respPreview ? ` · ${respPreview}` : ''}.`;
+        } else {
+          draft.publishStatus = 'failed';
+          draft.statusNote = `${chosenConnector.name} returned HTTP ${resp.status}: ${respPreview || 'request failed'}`;
+        }
+
+        state.automationJobs.unshift({
+          id: `job_${crypto.randomUUID().slice(0, 8)}`,
+          workflowName: `${chosenConnector.name} -> ${draft.platform}`,
+          eventType: 'publish.ready',
+          targetWebhookUrl: url,
+          idempotencyKey: `idem_${crypto.randomUUID().slice(0, 10)}`,
+          payloadSummary: `${method} · ${draft.videoTitle.slice(0, 50)}`,
+          status: resp.ok ? 'succeeded' : 'failed',
+          attempts: 1,
+          maxAttempts: 3,
+          signaturePreview: `auth=${chosenConnector.authType || 'bearer'}`,
+          responseCode: resp.status,
+          providerCostUsd: 0,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          logs: [`[${new Date().toLocaleTimeString()}] ${method} ${url} -> HTTP ${resp.status}`],
+        });
       }
 
       appendAuditLog(state, {
         actor: state.twin.personality.creatorName || 'Creator',
         category: 'publishing',
         action: `Publishing ${draft.publishStatus}`,
-        detail: `${draft.platform} · ${draft.videoTitle}`,
+        detail: `${draft.platform} · ${draft.videoTitle} (${chosenConnector.name})`,
       });
 
       res.json(await writeWorkspace(mode, state));
@@ -2087,21 +2356,54 @@ async function startServer() {
     }
   });
 
-  // Integrations update & reachability check
+  // Integrations update & reachability / live API test
   app.put('/api/integrations/:id', async (req, res) => {
     try {
       const mode = resolveMode(req);
       const state = await readWorkspace(mode);
       const item = state.integrations.find((i) => i.id === req.params.id);
       if (!item) return res.status(404).json({ error: 'Integration not found.' });
-      item.endpointUrl = String(req.body.endpointUrl || '').trim();
-      item.configured = Boolean(item.endpointUrl);
+
+      if (typeof req.body.endpointUrl === 'string') {
+        item.endpointUrl = req.body.endpointUrl.trim();
+      }
+      if (typeof req.body.httpMethod === 'string') {
+        item.httpMethod = req.body.httpMethod as ConnectorHttpMethod;
+      }
+      if (typeof req.body.authType === 'string') {
+        item.authType = req.body.authType as ConnectorAuthType;
+      }
+      if (typeof req.body.authHeaderName === 'string') {
+        item.authHeaderName = req.body.authHeaderName.trim();
+      }
+      if (typeof req.body.apiToken === 'string') {
+        item.apiToken = req.body.apiToken.trim();
+      }
+      if (typeof req.body.accountId === 'string') {
+        item.accountId = req.body.accountId.trim();
+      }
+      if (typeof req.body.publicMediaBaseUrl === 'string') {
+        item.publicMediaBaseUrl = req.body.publicMediaBaseUrl.trim();
+      }
+      if (typeof req.body.customHeadersJson === 'string') {
+        item.customHeadersJson = req.body.customHeadersJson;
+      }
+      if (typeof req.body.payloadTemplateJson === 'string') {
+        item.payloadTemplateJson = req.body.payloadTemplateJson;
+      }
+
+      if (item.nodeKind === 'instagram_graph' || item.nodeKind === 'facebook_graph') {
+        item.configured = Boolean(item.accountId && item.apiToken);
+      } else {
+        item.configured = Boolean(item.endpointUrl);
+      }
       item.status = item.configured ? 'connected' : 'unconfigured';
       item.lastCheckedAt = new Date().toISOString();
+
       appendAuditLog(state, {
         actor: state.twin.personality.creatorName || 'Creator',
         category: 'security',
-        action: 'Integration Endpoint Updated',
+        action: 'Integration Node Updated',
         detail: `${item.name} (${item.configured ? 'Configured' : 'Cleared'})`,
       });
       res.json(await writeWorkspace(mode, state));
@@ -2116,20 +2418,154 @@ async function startServer() {
       const state = await readWorkspace(mode);
       const item = state.integrations.find((i) => i.id === req.params.id);
       if (!item) return res.status(404).json({ error: 'Integration not found.' });
-      item.lastCheckedAt = new Date().toISOString();
+      const now = new Date().toISOString();
+      item.lastCheckedAt = now;
 
       if (item.id === 'gemini_intelligence' || item.id === 'gemini_omni_veo') {
         item.status = state.capabilities.geminiConfigured ? 'connected' : 'unconfigured';
+        item.lastTestResult = {
+          ok: state.capabilities.geminiConfigured,
+          message: state.capabilities.geminiConfigured
+            ? 'Server-side GEMINI_API_KEY verified.'
+            : 'GEMINI_API_KEY missing in environment.',
+          testedAt: now,
+        };
       } else if (item.id === 'ffmpeg_local') {
         item.status = state.capabilities.ffmpegAvailable ? 'connected' : 'unreachable';
+        item.lastTestResult = {
+          ok: state.capabilities.ffmpegAvailable,
+          message: state.capabilities.ffmpegAvailable ? 'Local FFmpeg binary healthy.' : 'FFmpeg missing.',
+          testedAt: now,
+        };
+      } else if (item.id === 'instagram_direct') {
+        if (!item.accountId || !item.apiToken) {
+          item.status = 'unconfigured';
+          item.lastTestResult = {
+            ok: false,
+            message: 'Enter both IG Business Account ID and Meta Graph Access Token first.',
+            testedAt: now,
+          };
+        } else {
+          try {
+            const url = `https://graph.facebook.com/v21.0/${encodeURIComponent(item.accountId)}?fields=id,username,name&access_token=${encodeURIComponent(item.apiToken)}`;
+            const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+            const bodyText = await resp.text();
+            item.status = resp.ok ? 'connected' : 'unreachable';
+            item.lastTestResult = {
+              ok: resp.ok,
+              statusCode: resp.status,
+              message: resp.ok
+                ? 'Instagram Graph Account verified & ready for Reels publishing.'
+                : `Meta Graph API returned HTTP ${resp.status}`,
+              responsePreview: bodyText.slice(0, 260),
+              testedAt: now,
+            };
+          } catch (netErr: any) {
+            item.status = 'unreachable';
+            item.lastTestResult = {
+              ok: false,
+              message: netErr.message || 'Failed contacting Meta Graph API',
+              testedAt: now,
+            };
+          }
+        }
+      } else if (item.id === 'facebook_direct') {
+        if (!item.accountId || !item.apiToken) {
+          item.status = 'unconfigured';
+          item.lastTestResult = {
+            ok: false,
+            message: 'Enter both Facebook Page ID and Page Access Token first.',
+            testedAt: now,
+          };
+        } else {
+          try {
+            const url = `https://graph.facebook.com/v21.0/${encodeURIComponent(item.accountId)}?fields=id,name&access_token=${encodeURIComponent(item.apiToken)}`;
+            const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+            const bodyText = await resp.text();
+            item.status = resp.ok ? 'connected' : 'unreachable';
+            item.lastTestResult = {
+              ok: resp.ok,
+              statusCode: resp.status,
+              message: resp.ok
+                ? 'Facebook Page Token verified & ready for video publishing.'
+                : `Meta Graph API returned HTTP ${resp.status}`,
+              responsePreview: bodyText.slice(0, 260),
+              testedAt: now,
+            };
+          } catch (netErr: any) {
+            item.status = 'unreachable';
+            item.lastTestResult = {
+              ok: false,
+              message: netErr.message || 'Failed contacting Meta Graph API',
+              testedAt: now,
+            };
+          }
+        }
       } else if (!item.endpointUrl) {
         item.status = 'unconfigured';
+        item.lastTestResult = {
+          ok: false,
+          message: 'No endpoint URL configured.',
+          testedAt: now,
+        };
+      } else if (item.id === 'n8n_http_node' || item.nodeKind === 'http_node') {
+        const { url, headers, method } = buildHttpNodeRequestConfig(item);
+        const testVars = {
+          id: 'test_draft_preview',
+          title: 'TwinForge HTTP Node Connection Check',
+          platform: 'Instagram Reels',
+          videoUrl: 'https://example.com/demo.mp4',
+          thumbnailUrl: 'https://example.com/thumb.jpg',
+          caption: 'HTTP Node connectivity verification from TwinForge Studio',
+          hashtags: '#TwinForge #Automation',
+          aspectRatio: '9:16',
+          scheduledFor: now.slice(0, 16),
+        };
+        const body =
+          method === 'GET'
+            ? undefined
+            : renderHttpNodePayload(item.payloadTemplateJson, testVars);
+        try {
+          const resp = await fetch(url, {
+            method,
+            headers,
+            body,
+            signal: AbortSignal.timeout(8000),
+          });
+          const respText = await resp.text().catch(() => '');
+          item.status = resp.ok ? 'connected' : resp.status < 500 ? 'reachable' : 'unreachable';
+          item.lastTestResult = {
+            ok: resp.ok,
+            statusCode: resp.status,
+            message: `${method} ${url} -> HTTP ${resp.status}`,
+            responsePreview: respText.slice(0, 280),
+            testedAt: now,
+          };
+        } catch (errNet: any) {
+          item.status = 'unreachable';
+          item.lastTestResult = {
+            ok: false,
+            message: `${method} request failed: ${errNet.message}`,
+            testedAt: now,
+          };
+        }
       } else {
         try {
-          const resp = await fetch(item.endpointUrl, { method: 'HEAD' });
+          const resp = await fetch(item.endpointUrl, { method: 'HEAD', signal: AbortSignal.timeout(6000) });
           item.status = resp.ok || resp.status < 500 ? 'reachable' : 'unreachable';
-        } catch {
+          item.lastTestResult = {
+            ok: resp.ok || resp.status < 500,
+            statusCode: resp.status,
+            message: `HEAD -> HTTP ${resp.status}`,
+            testedAt: now,
+          };
+        } catch (errNet: any) {
           item.status = 'unreachable';
+          item.lastTestResult = {
+            ok: false,
+            message: errNet.message || 'Endpoint unreachable',
+            testedAt: now,
+          };
         }
       }
       res.json(await writeWorkspace(mode, state));

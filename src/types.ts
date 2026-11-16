@@ -308,6 +308,36 @@ export type PromptLibraryCategory =
   | 'Story & Cinema'
   | 'Creator Hooks';
 
+export type ShootingAnglePreset =
+  | 'auto_director'
+  | 'eye_level_studio'
+  | 'low_angle_hero'
+  | 'over_shoulder_frame'
+  | 'wide_establishing'
+  | 'close_up_intimate'
+  | 'dutch_dynamic'
+  | 'macro_broll_insert';
+
+export type ColorGradePreset =
+  | 'warm_editorial'
+  | 'teal_amber_cinema'
+  | 'kodak_soft'
+  | 'noir_contrast'
+  | 'vibrant_creator';
+
+export type AnimationPresetMode =
+  | 'cinematic_layered'
+  | 'dynamic_storyboard'
+  | 'high_energy_reels'
+  | 'minimal_documentary';
+
+export type TransitionStylePreset =
+  | 'auto_choreography'
+  | 'cinematic_dissolve'
+  | 'whip_pan'
+  | 'film_fade'
+  | 'geometric_iris';
+
 export type CameraMotionType =
   | 'punch_zoom'
   | 'kinetic_pan'
@@ -333,6 +363,7 @@ export interface VisualPromptTemplate {
   themeMood: SceneVisualBeat['themeMood'];
   motionGraphicPreset: MotionGraphicPreset;
   cameraMotion: CameraMotionType;
+  shootingAngle: Exclude<ShootingAnglePreset, 'auto_director'>;
   visualCardType: VisualCardType;
   colorAccent: string;
   clipKeywords: string[];
@@ -368,6 +399,7 @@ export interface SceneVisualBeat {
   promptTemplateName?: string;
   motionGraphicPreset?: MotionGraphicPreset;
   cameraMotion?: CameraMotionType;
+  shootingAngle?: Exclude<ShootingAnglePreset, 'auto_director'>;
   visionRationale?: string;
   mediaKind?: 'animated_clip' | 'motion_graphic' | 'curated_frame';
 }
@@ -389,6 +421,10 @@ export interface VideoRenderJob {
   backgroundStyle: BackgroundStyleType | string;
   presenterMode?: PresenterVisualMode;
   productionStyle?: ProductionStyle;
+  shootingAngle?: ShootingAnglePreset;
+  colorGrade?: ColorGradePreset;
+  animationMode?: AnimationPresetMode;
+  transitionStyle?: TransitionStylePreset;
   wardrobeNote: string;
   speakingSpeed: number;
   voiceIntensity: 'Measured' | 'Balanced' | 'Dynamic';
@@ -493,6 +529,9 @@ export interface AnalyticsRecord {
   loggedAt: string;
 }
 
+export type ConnectorAuthType = 'none' | 'bearer' | 'header_key' | 'query_token' | 'basic';
+export type ConnectorHttpMethod = 'POST' | 'PUT' | 'PATCH' | 'GET';
+
 export interface IntegrationConnector {
   id: string;
   name: string;
@@ -506,6 +545,23 @@ export interface IntegrationConnector {
   supportsVoiceCloning: boolean;
   lastCheckedAt: string | null;
   notes: string;
+  // Direct Social Graph API & n8n-style HTTP Request Node configuration
+  nodeKind?: 'standard' | 'http_node' | 'instagram_graph' | 'facebook_graph';
+  httpMethod?: ConnectorHttpMethod;
+  authType?: ConnectorAuthType;
+  authHeaderName?: string;
+  apiToken?: string;
+  accountId?: string;
+  publicMediaBaseUrl?: string;
+  customHeadersJson?: string;
+  payloadTemplateJson?: string;
+  lastTestResult?: {
+    ok: boolean;
+    statusCode?: number;
+    message: string;
+    responsePreview?: string;
+    testedAt: string;
+  };
 }
 
 export interface AuditLogEntry {

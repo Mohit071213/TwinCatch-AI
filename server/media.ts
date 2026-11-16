@@ -3,7 +3,15 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
-import type { ProductionStyle, VoicePitchWarmth, VoiceProsodyPreset } from '../src/types.ts';
+import type {
+  AnimationPresetMode,
+  ColorGradePreset,
+  ProductionStyle,
+  ShootingAnglePreset,
+  TransitionStylePreset,
+  VoicePitchWarmth,
+  VoiceProsodyPreset,
+} from '../src/types.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -138,6 +146,22 @@ function msToSilencePcm24k(ms: number): Buffer {
   return Buffer.alloc(byteCount - (byteCount % 2), 0);
 }
 
+function smoothPcmEdges(pcm: Buffer, fadeSamples = 240): Buffer {
+  const totalSamples = Math.floor(pcm.length / 2);
+  if (totalSamples < fadeSamples * 2) return pcm;
+  const out = Buffer.from(pcm);
+  for (let i = 0; i < fadeSamples; i++) {
+    const gainIn = i / fadeSamples;
+    const sIn = Math.round(out.readInt16LE(i * 2) * gainIn);
+    out.writeInt16LE(sIn, i * 2);
+
+    const endIdx = totalSamples - 1 - i;
+    const sOut = Math.round(out.readInt16LE(endIdx * 2) * gainIn);
+    out.writeInt16LE(sOut, endIdx * 2);
+  }
+  return out;
+}
+
 interface SpeechPhrase {
   text: string;
   pauseAfterMs: number;
@@ -265,7 +289,7 @@ export async function synthesizeEdgeNeuralSpeechWav(params: {
 
   const ratePct = Math.round((effectivePace - 1.0) * 100);
   const rateStr = `${ratePct >= 0 ? '+' : ''}${ratePct}%`;
-  const pitchStr = warmth === 'warm' ? '-3Hz' : warmth === 'bright' ? '+4Hz' : '+0Hz';
+  const basePitchHz = warmth === 'warm' ? -3 : warmth === 'bright' ? 4 : 0;
 
   const phrases = segmentConversationalPhrases(params.text.slice(0, 2200), preset, naturalPauses);
   const tts = new MsEdgeTTS({ connectionTimeoutMs: 12000, synthesisTimeoutMs: 25000 });
@@ -274,7 +298,13 @@ export async function synthesizeEdgeNeuralSpeechWav(params: {
   try {
     await tts.setMetadata(voiceUsed, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
 
-    for (const phrase of phrases) {
+    for (let pIdx = 0; pIdx < phrases.length; pIdx++) {
+      const phrase = phrases[pIdx];
+      const isQuestion = phrase.text.includes('?') || /^क्या\b|^kya\b/i.test(phrase.text);
+      const contourHz = isQuestion ? 2 : pIdx % 2 === 1 ? -1 : 1;
+      const effectivePitchHz = basePitchHz + contourHz;
+      const pitchStr = `${effectivePitchHz >= 0 ? '+' : ''}${effectivePitchHz}Hz`;
+
       const { audioStream } = tts.toStream(escapeSsmlText(phrase.text), {
         rate: rateStr,
         pitch: pitchStr,
@@ -294,7 +324,7 @@ export async function synthesizeEdgeNeuralSpeechWav(params: {
         15000
       );
       if (pcmChunk.length > 0) {
-        pcmParts.push(pcmChunk);
+        pcmParts.push(smoothPcmEdges(pcmChunk, 260));
         if (phrase.pauseAfterMs > 0) {
           pcmParts.push(msToSilencePcm24k(phrase.pauseAfterMs));
         }
@@ -313,7 +343,7 @@ export async function synthesizeEdgeNeuralSpeechWav(params: {
     throw new Error('Free Neural Hindi TTS returned insufficient audio.');
   }
 
-  // Master concatenated speech PCM with subtle broadcast vocal warmth & balanced loudness
+  // Master concatenated speech PCM with studio vocal warmth, light compression & balanced broadcast loudness
   const tmpPcm = `${params.outputWavPath}.tmp.pcm`;
   await fs.writeFile(tmpPcm, combinedPcm);
   try {
@@ -330,7 +360,7 @@ export async function synthesizeEdgeNeuralSpeechWav(params: {
         '-i',
         tmpPcm,
         '-af',
-        'highpass=f=75,equalizer=f=210:t=q:w=1.1:g=2.0,equalizer=f=4400:t=q:w=1.3:g=-1.5,loudnorm=I=-16:TP=-1.5:LRA=9',
+        'highpass=f=75,equalizer=f=190:t=q:w=1.0:g=2.2,equalizer=f=3200:t=q:w=1.2:g=1.1,equalizer=f=6200:t=q:w=1.4:g=-1.8,acompressor=threshold=-18dB:ratio=2.2:attack=15:release=140,loudnorm=I=-16:TP=-1.5:LRA=8',
         '-ar',
         '24000',
         '-ac',
@@ -416,6 +446,10 @@ export interface FfmpegRenderOptions {
   sceneBackgroundPaths?: string[];
   presenterMode?: 'auto_match' | 'faceless_broll' | 'twin_owner' | 'cast_ananya' | 'cast_meera' | 'cast_kabir';
   productionStyle?: ProductionStyle;
+  shootingAngle?: ShootingAnglePreset;
+  colorGrade?: ColorGradePreset;
+  animationMode?: AnimationPresetMode;
+  transitionStyle?: TransitionStylePreset;
   beatOverlays?: Array<{
     headline?: string;
     calloutText?: string;
@@ -423,6 +457,7 @@ export interface FfmpegRenderOptions {
     isPunchline?: boolean;
     motionGraphicPreset?: string;
     cameraMotion?: string;
+    shootingAngle?: ShootingAnglePreset;
     colorAccent?: string;
     startPct: number;
     endPct: number;
@@ -562,20 +597,54 @@ export async function renderTwinVideoFFmpeg(opts: FfmpegRenderOptions): Promise<
       if (isGif) {
         args.push('-ignore_loop', '0', '-t', String((rawShotDur + 0.2).toFixed(2)), '-i', imgPath);
       } else {
-        args.push('-loop', '1', '-t', String((rawShotDur + 0.2).toFixed(2)), '-framerate', String(fps), '-i', imgPath);
+        args.push('-i', imgPath);
       }
     }
     audioInputIdx = shotCount;
 
-    const zoomRate = style === 'comedy_skit' ? 0.0032 : style === 'visual_explainer' ? 0.0016 : 0.002;
+    const zoomRate = style === 'comedy_skit' ? 0.0032 : style === 'visual_explainer' ? 0.0016 : 0.0022;
+    const chosenGrade: ColorGradePreset = opts.colorGrade || 'teal_amber_cinema';
     const eqFilter =
-      style === 'comedy_skit'
-        ? 'eq=contrast=1.08:saturation=1.18:brightness=0.02'
-        : style === 'story_cinema'
-          ? 'eq=contrast=1.09:saturation=0.90:brightness=-0.02'
-          : 'eq=contrast=1.05:saturation=1.04';
+      chosenGrade === 'teal_amber_cinema'
+        ? 'colorbalance=rs=0.05:gs=-0.01:bs=-0.06:rm=0.02:gm=0.01:bm=0.04:rh=-0.03:gh=0.0:bh=0.05,eq=contrast=1.10:saturation=1.08:brightness=-0.01'
+        : chosenGrade === 'kodak_soft'
+          ? 'colorbalance=rs=0.05:gs=0.03:bs=-0.04:rh=0.04:gh=0.02:bh=-0.03,eq=contrast=1.04:saturation=0.95:brightness=0.02'
+          : chosenGrade === 'noir_contrast'
+            ? 'eq=contrast=1.20:saturation=0.52:brightness=-0.02'
+            : chosenGrade === 'vibrant_creator'
+              ? 'eq=contrast=1.09:saturation=1.22:brightness=0.02'
+              : style === 'comedy_skit'
+                ? 'eq=contrast=1.08:saturation=1.18:brightness=0.02'
+                : style === 'story_cinema'
+                  ? 'colorbalance=rs=0.04:gs=-0.01:bs=-0.05:rh=-0.02:bh=0.04,eq=contrast=1.10:saturation=0.93:brightness=-0.02'
+                  : 'colorbalance=rs=0.03:gs=0.01:bs=-0.03,eq=contrast=1.06:saturation=1.05';
 
-    const buildStaticMove = (cam: string | undefined, idx: number) => {
+    const buildStaticMove = (cam: string | undefined, beatAngle: ShootingAnglePreset | undefined, idx: number) => {
+      const resolvedAngle =
+        opts.shootingAngle && opts.shootingAngle !== 'auto_director'
+          ? opts.shootingAngle
+          : beatAngle || 'eye_level_studio';
+
+      if (resolvedAngle === 'close_up_intimate') {
+        return `zoompan=z='if(eq(on,1),${(framingStartZoom + 0.12).toFixed(2)},min(zoom+0.0022,${(framingStartZoom + 0.34).toFixed(2)}))':x='iw/2-(iw/zoom/2)':y='ih/2.6-(ih/zoom/2.6)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`;
+      }
+      if (resolvedAngle === 'low_angle_hero') {
+        return `zoompan=z='if(eq(on,1),${(framingStartZoom + 0.08).toFixed(2)},min(zoom+0.0018,${(framingStartZoom + 0.26).toFixed(2)}))':x='iw/2-(iw/zoom/2)':y='(ih*0.56-(ih/zoom/2))-(ih*0.14*(on/${shotFrames}))':d=${shotFrames}:s=${w}x${h}:fps=${fps}`;
+      }
+      if (resolvedAngle === 'wide_establishing') {
+        return `zoompan=z='if(eq(on,1),${(framingStartZoom + 0.22).toFixed(2)},max(zoom-0.0018,1.02))':x='iw/2-(iw/zoom/2)':y='ih/2.2-(ih/zoom/2.2)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`;
+      }
+      if (resolvedAngle === 'over_shoulder_frame') {
+        const anchorSide = idx % 2 === 0 ? '0.62' : '0.38';
+        return `zoompan=z='${(framingStartZoom + 0.16).toFixed(2)}':x='(iw*${anchorSide}-(iw/zoom/2))+(on/${shotFrames})*24':y='ih/2.4-(ih/zoom/2.4)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`;
+      }
+      if (resolvedAngle === 'dutch_dynamic') {
+        return `zoompan=z='if(eq(on,1),${(framingStartZoom + 0.05).toFixed(2)},min(zoom+0.0028,${(framingStartZoom + 0.30).toFixed(2)}))':x='(iw-iw/zoom)*(0.2+0.6*(on/${shotFrames}))':y='(ih-ih/zoom)*(0.2+0.5*(on/${shotFrames}))':d=${shotFrames}:s=${w}x${h}:fps=${fps}`;
+      }
+      if (resolvedAngle === 'macro_broll_insert') {
+        return `zoompan=z='if(eq(on,1),${(framingStartZoom + 0.10).toFixed(2)},min(zoom+0.0024,${(framingStartZoom + 0.35).toFixed(2)}))':x='iw/2-(iw/zoom/2)':y='ih/2.35-(ih/zoom/2.35)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`;
+      }
+
       if (cam === 'punch_zoom') {
         return `zoompan=z='if(eq(on,1),${framingStartZoom},min(zoom+${(zoomRate * 1.25).toFixed(4)},${(framingStartZoom + 0.28).toFixed(2)}))':x='iw/2-(iw/zoom/2)':y='ih/2.45-(ih/zoom/2.45)':d=${shotFrames}:s=${w}x${h}:fps=${fps}`;
       }
@@ -600,25 +669,35 @@ export async function renderTwinVideoFFmpeg(opts: FfmpegRenderOptions): Promise<
       const imgPath = shotImages[i] || '';
       const isGif = imgPath.toLowerCase().endsWith('.gif');
       const beatCam = opts.beatOverlays?.[i]?.cameraMotion;
+      const beatAngle = opts.beatOverlays?.[i]?.shootingAngle;
       if (isGif) {
         // Animated GIFs already contain multi-frame motion; normalize FPS/size directly without zoompan frame multiplication
         filters.push(
           `[${i}:v]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},fps=${fps},trim=duration=${rawShotDur},setpts=PTS-STARTPTS,settb=AVTB,setsar=1,format=yuv420p,${eqFilter}[v${i}]`
         );
       } else {
-        const moveFilter = buildStaticMove(beatCam, i);
+        const moveFilter = buildStaticMove(beatCam, beatAngle, i);
         filters.push(
-          `[${i}:v]scale=${w * 2}:${h * 2}:force_original_aspect_ratio=increase,crop=${w * 2}:${h * 2},${moveFilter},settb=AVTB,setsar=1,format=yuv420p,${eqFilter}[v${i}]`
+          `[${i}:v]scale=${w * 2}:${h * 2}:force_original_aspect_ratio=increase,crop=${w * 2}:${h * 2},${moveFilter},settb=AVTB,setsar=1,format=yuv420p,${eqFilter},vignette=PI/5.2,unsharp=5:5:0.45[v${i}]`
         );
       }
     }
 
+    const tStyle: TransitionStylePreset = opts.transitionStyle || 'auto_choreography';
     const transitions =
-      style === 'comedy_skit'
-        ? ['wipeleft', 'wiperight', 'slidedown', 'slideup', 'radial']
-        : style === 'story_cinema'
-          ? ['dissolve', 'fadeblack', 'dissolve', 'smoothleft', 'dissolve']
-          : ['smoothleft', 'slideup', 'smoothright', 'dissolve', 'circleopen'];
+      tStyle === 'whip_pan'
+        ? ['slideleft', 'slideright', 'wipeleft', 'wiperight', 'smoothleft']
+        : tStyle === 'cinematic_dissolve'
+          ? ['dissolve', 'fade', 'dissolve', 'smoothleft', 'dissolve']
+          : tStyle === 'film_fade'
+            ? ['fadeblack', 'dissolve', 'fadeblack', 'fade', 'fadeblack']
+            : tStyle === 'geometric_iris'
+              ? ['circleopen', 'radial', 'circleclose', 'rectcrop', 'circleopen']
+              : style === 'comedy_skit'
+                ? ['wipeleft', 'wiperight', 'slidedown', 'slideup', 'radial']
+                : style === 'story_cinema'
+                  ? ['dissolve', 'fadeblack', 'dissolve', 'smoothleft', 'dissolve']
+                  : ['smoothleft', 'slideup', 'smoothright', 'dissolve', 'circleopen'];
     let prev = 'v0';
     for (let i = 1; i < shotCount; i++) {
       const offset = Number((i * (rawShotDur - xfadeDur)).toFixed(2));

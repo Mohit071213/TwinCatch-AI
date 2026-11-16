@@ -34,6 +34,7 @@ export const PromptLibraryModal: React.FC<PromptLibraryModalProps> = ({
         tpl.directorPrompt.toLowerCase().includes(q) ||
         tpl.sampleCallout.toLowerCase().includes(q) ||
         tpl.motionGraphicPreset.toLowerCase().includes(q) ||
+        tpl.shootingAngle.toLowerCase().includes(q) ||
         tpl.clipKeywords.some((kw) => kw.toLowerCase().includes(q))
       );
     });
@@ -157,7 +158,8 @@ export const PromptLibraryModal: React.FC<PromptLibraryModalProps> = ({
                       <div className="flex items-start justify-between gap-2">
                         <div>
                           <div className="text-[10.5px] font-mono uppercase tracking-[0.08em] text-[#77766F]">
-                            {tpl.category} · {tpl.cameraMotion.replace(/_/g, ' ')}
+                            {tpl.category} · {tpl.shootingAngle.replace(/_/g, ' ')} ·{' '}
+                            {tpl.cameraMotion.replace(/_/g, ' ')}
                           </div>
                           <h3 className="text-[14.5px] font-semibold text-[#242421] leading-snug mt-0.5">
                             {tpl.name}

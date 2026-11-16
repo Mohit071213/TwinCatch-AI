@@ -159,76 +159,76 @@ export const FREE_HINDI_VOICES: VoiceOption[] = [
 
 export const GEMINI_STUDIO_VOICES: VoiceOption[] = [
   {
+    id: 'Kore',
+    shortName: 'Kore',
+    label: 'Kore — Expressive Clear Storyteller (Female · Hindi / English · Free Tier)',
+    gender: 'Female',
+    categoryLabel: 'Conversational Multilingual (Hindi / Hinglish)',
+    languageHint: 'Multilingual',
+    style: 'Warm articulate Hindi & English narrator (Gemini 3.8 Flash / Lite TTS)',
+  },
+  {
     id: 'Charon',
     shortName: 'Charon',
-    label: 'Charon (Deep Editorial Male)',
+    label: 'Charon — Deep Editorial Storyteller (Male · Hindi / English · Free Tier)',
     gender: 'Male',
-    categoryLabel: 'Native Indian Neural',
+    categoryLabel: 'Conversational Multilingual (Hindi / Hinglish)',
     languageHint: 'Multilingual',
-    style: 'Authoritative bass cadence',
+    style: 'Authoritative bass cadence for explainers and documentaries',
   },
   {
     id: 'Puck',
     shortName: 'Puck',
-    label: 'Puck (Energetic Conversational)',
+    label: 'Puck — Lively Conversational Creator (Male · Hinglish / Comedy · Free Tier)',
     gender: 'Male',
-    categoryLabel: 'Native Indian Neural',
+    categoryLabel: 'Conversational Multilingual (Hindi / Hinglish)',
     languageHint: 'Multilingual',
-    style: 'Lively creator hook delivery',
-  },
-  {
-    id: 'Kore',
-    shortName: 'Kore',
-    label: 'Kore (Clear Studio Female)',
-    gender: 'Female',
-    categoryLabel: 'Native Indian Neural',
-    languageHint: 'Multilingual',
-    style: 'Warm articulate explainer',
-  },
-  {
-    id: 'Fenrir',
-    shortName: 'Fenrir',
-    label: 'Fenrir (Warm Baritone)',
-    gender: 'Male',
-    categoryLabel: 'Native Indian Neural',
-    languageHint: 'Multilingual',
-    style: 'Calm documentary narrator',
-  },
-  {
-    id: 'Zephyr',
-    shortName: 'Zephyr',
-    label: 'Zephyr (Articulate Neutral)',
-    gender: 'Female',
-    categoryLabel: 'Native Indian Neural',
-    languageHint: 'Multilingual',
-    style: 'Clean balanced pace',
+    style: 'Energetic conversational creator hook and skit delivery',
   },
   {
     id: 'Aoede',
     shortName: 'Aoede',
-    label: 'Aoede (Expressive Storytelling Female)',
+    label: 'Aoede — Melodic Warm Narrator (Female · Hindi / Story · Free Tier)',
     gender: 'Female',
-    categoryLabel: 'Native Indian Neural',
+    categoryLabel: 'Conversational Multilingual (Hindi / Hinglish)',
     languageHint: 'Multilingual',
-    style: 'Melodic narrative phrasing',
+    style: 'Melodic storytelling phrasing with expressive emotion',
+  },
+  {
+    id: 'Fenrir',
+    shortName: 'Fenrir',
+    label: 'Fenrir — Calm Documentary Baritone (Male · Multilingual · Free Tier)',
+    gender: 'Male',
+    categoryLabel: 'Conversational Multilingual (Hindi / Hinglish)',
+    languageHint: 'Multilingual',
+    style: 'Grounded low-register narrator for science and history',
+  },
+  {
+    id: 'Zephyr',
+    shortName: 'Zephyr',
+    label: 'Zephyr — Natural Balanced Host (Female · Multilingual · Free Tier)',
+    gender: 'Female',
+    categoryLabel: 'Conversational Multilingual (Hindi / Hinglish)',
+    languageHint: 'Multilingual',
+    style: 'Clean balanced pace without stiff robotic pauses',
   },
   {
     id: 'Leda',
     shortName: 'Leda',
-    label: 'Leda (Youthful Conversational)',
+    label: 'Leda — Youthful Reels Host (Female · Hinglish / Comedy · Free Tier)',
     gender: 'Female',
-    categoryLabel: 'Native Indian Neural',
+    categoryLabel: 'Conversational Multilingual (Hindi / Hinglish)',
     languageHint: 'Multilingual',
-    style: 'Fast-paced reels cadence',
+    style: 'Fast-paced conversational reels cadence',
   },
   {
     id: 'Orus',
     shortName: 'Orus',
-    label: 'Orus (Structured Presenter)',
+    label: 'Orus — Crisp Explainer Analyst (Male · Multilingual · Free Tier)',
     gender: 'Male',
-    categoryLabel: 'Native Indian Neural',
+    categoryLabel: 'Conversational Multilingual (Hindi / Hinglish)',
     languageHint: 'Multilingual',
-    style: 'Sharp analytical tone',
+    style: 'Sharp structured breakdown tone',
   },
 ];
 
@@ -245,11 +245,11 @@ export function defaultVoiceForProvider(
 ): string {
   if (provider === 'free_hindi_neural') {
     if (language === 'English') return 'en-US-AvaMultilingualNeural';
-    if (language === 'Hinglish') return 'en-US-AndrewMultilingualNeural';
+    if (language === 'Hindi') return 'hi-IN-SwaraNeural';
     return 'en-US-AndrewMultilingualNeural';
   }
   if (provider === 'ambient_studio') return 'Studio Beat';
-  return 'Charon';
+  return language === 'Hindi' ? 'Kore' : 'Puck';
 }
 
 export function samplePreviewText(language: TwinLanguage): string {

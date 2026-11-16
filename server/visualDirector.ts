@@ -7,6 +7,7 @@ import type {
   ProductionStyle,
   SceneVisualBeat,
   ScriptGenre,
+  ShootingAnglePreset,
   TwinLanguage,
   VideoFormatType,
   VisualPromptTemplate,
@@ -261,7 +262,7 @@ async function analyzeScriptAndSelectPromptLibraryViaGeminiVision(params: {
   try {
     const libraryIndexText = VISUAL_PROMPT_LIBRARY.map(
       (t) =>
-        `- id="${t.id}" | name="${t.name}" | category="${t.category}" | motion="${t.motionGraphicPreset}" | camera="${t.cameraMotion}" | style="${t.productionStyle}" | desc="${t.directorPrompt}"`
+        `- id="${t.id}" | name="${t.name}" | category="${t.category}" | motion="${t.motionGraphicPreset}" | camera="${t.cameraMotion}" | angle="${t.shootingAngle}" | style="${t.productionStyle}" | desc="${t.directorPrompt}"`
     ).join('\n');
 
     const overrideNotes = Object.entries(params.beatTemplateOverrides || {})
@@ -705,17 +706,29 @@ export async function resolvePresenterSelection(params: {
     }
   }
 
+  const dedupedOrdered = (preferredFirst: typeof params.twinFaceImageAssets) => {
+    const seenUrls = new Set<string>();
+    const unique: typeof params.twinFaceImageAssets = [];
+    for (const item of preferredFirst) {
+      if (!seenUrls.has(item.url)) {
+        seenUrls.add(item.url);
+        unique.push(item);
+      }
+    }
+    return unique.length > 0 ? unique : preferredFirst;
+  };
+
   if (requestedMode === 'twin_owner' && params.twinFaceImageAssets.length > 0) {
     const preferred =
       params.twinFaceImageAssets.find((a) => a.id === params.preferredPortraitId) ||
       params.twinFaceImageAssets[0];
-    const ordered = [
+    const ordered = dedupedOrdered([
       preferred,
       ...params.twinFaceImageAssets.filter((a) => a.id !== preferred.id),
-    ];
+    ]);
     return {
       presenterModeResolved: 'twin_owner',
-      presenterLabel: 'My Uploaded Twin Portrait',
+      presenterLabel: `My Uploaded Twin Portrait (${ordered.length} Angles Active)`,
       presenterImageUrls: ordered.map((a) => a.url),
       presenterDiskPaths: ordered.map((a) => a.diskPath).filter((x): x is string => Boolean(x)),
     };
@@ -754,13 +767,13 @@ export async function resolvePresenterSelection(params: {
     const preferred =
       params.twinFaceImageAssets.find((a) => a.id === params.preferredPortraitId) ||
       params.twinFaceImageAssets[0];
-    const ordered = [
+    const ordered = dedupedOrdered([
       preferred,
       ...params.twinFaceImageAssets.filter((a) => a.id !== preferred.id),
-    ];
+    ]);
     return {
       presenterModeResolved: 'twin_owner',
-      presenterLabel: 'Your Uploaded Twin Portrait (Matched to Male Voice)',
+      presenterLabel: `Your Uploaded Twin Portrait (${ordered.length} Angles Active)`,
       presenterImageUrls: ordered.map((a) => a.url),
       presenterDiskPaths: ordered.map((a) => a.diskPath).filter((x): x is string => Boolean(x)),
     };
@@ -781,10 +794,10 @@ export async function resolvePresenterSelection(params: {
     }
   }
 
-  const orderedFallback = params.twinFaceImageAssets;
+  const orderedFallback = dedupedOrdered(params.twinFaceImageAssets);
   return {
     presenterModeResolved: 'twin_owner',
-    presenterLabel: 'Studio Editorial Presenter',
+    presenterLabel: `Studio Editorial Presenter (${orderedFallback.length} Angles)`,
     presenterImageUrls: orderedFallback.map((a) => a.url),
     presenterDiskPaths: orderedFallback.map((a) => a.diskPath).filter((x): x is string => Boolean(x)),
   };
@@ -801,6 +814,7 @@ export async function planAndFetchScriptVisuals(params: {
   backgroundStyle?: string;
   presenterMode?: PresenterVisualMode;
   productionStyle?: ProductionStyle;
+  shootingAngle?: ShootingAnglePreset;
   voiceIdentity?: string;
   mode: WorkspaceMode;
   twinFaceImageAssets: Array<{ id: string; url: string; diskPath?: string }>;
@@ -822,6 +836,7 @@ export async function planAndFetchScriptVisuals(params: {
         b: params.backgroundStyle,
         pm: params.presenterMode,
         ps: params.productionStyle,
+        sa: params.shootingAngle || 'auto_director',
         v: params.voiceIdentity,
         pid: params.preferredPortraitId,
         ov: params.beatTemplateOverrides || {},
@@ -917,6 +932,10 @@ export async function planAndFetchScriptVisuals(params: {
       promptTemplateName: tpl.name,
       motionGraphicPreset: tpl.motionGraphicPreset,
       cameraMotion: tpl.cameraMotion,
+      shootingAngle:
+        params.shootingAngle && params.shootingAngle !== 'auto_director'
+          ? params.shootingAngle
+          : tpl.shootingAngle,
       visionRationale: overrideTpl
         ? `Manual override: ${overrideTpl.name}`
         : decision?.visionRationale || `${tpl.name} · matched to ${prodStyleResolved.replace('_', ' ')}`,

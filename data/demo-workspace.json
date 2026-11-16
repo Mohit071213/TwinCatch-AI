@@ -10,7 +10,7 @@
         "mimeType": "image/jpeg",
         "filename": "twin_portrait_front.jpg",
         "sizeBytes": 342800,
-        "uploadedAt": "2026-11-13T05:18:25.892Z"
+        "uploadedAt": "2026-11-16T05:55:46.538Z"
       },
       {
         "id": "demo_face_talking",
@@ -20,17 +20,47 @@
         "mimeType": "image/jpeg",
         "filename": "twin_portrait_talking.jpg",
         "sizeBytes": 318400,
-        "uploadedAt": "2026-11-13T05:18:25.892Z"
+        "uploadedAt": "2026-11-16T05:55:46.538Z"
       },
       {
         "id": "demo_face_left",
         "category": "left_profile",
-        "label": "Studio Banner / Framing Reference",
+        "label": "Left Profile Studio Angle",
         "url": "/api/media/demo/studio_editorial_banner.jpg",
         "mimeType": "image/jpeg",
         "filename": "studio_editorial_banner.jpg",
         "sizeBytes": 412000,
-        "uploadedAt": "2026-11-13T05:18:25.892Z"
+        "uploadedAt": "2026-11-16T05:55:46.538Z"
+      },
+      {
+        "id": "demo_face_right",
+        "category": "right_profile",
+        "label": "Right Profile & Hero Angle Reference",
+        "url": "/api/media/demo/twin_portrait_talking.jpg",
+        "mimeType": "image/jpeg",
+        "filename": "twin_portrait_talking.jpg",
+        "sizeBytes": 318400,
+        "uploadedAt": "2026-11-16T05:55:46.538Z"
+      },
+      {
+        "id": "demo_face_smiling",
+        "category": "expression_smiling",
+        "label": "Warm Comedy / Engaging Smile Expression",
+        "url": "/api/media/demo/twin_portrait_front.jpg",
+        "mimeType": "image/jpeg",
+        "filename": "twin_portrait_front.jpg",
+        "sizeBytes": 342800,
+        "uploadedAt": "2026-11-16T05:55:46.538Z"
+      },
+      {
+        "id": "demo_face_lighting",
+        "category": "lighting_variation",
+        "label": "Warm Editorial Studio Lighting Plate",
+        "url": "/api/media/demo/studio_editorial_banner.jpg",
+        "mimeType": "image/jpeg",
+        "filename": "studio_editorial_banner.jpg",
+        "sizeBytes": 412000,
+        "uploadedAt": "2026-11-16T05:55:46.538Z"
       }
     ],
     "voiceSamples": [
@@ -46,7 +76,7 @@
         "durationSec": 14,
         "transcript": "Most creators waste six hours filming a forty-second reel when the real bottleneck is clarity of thought.",
         "verified": true,
-        "uploadedAt": "2026-11-13T05:18:25.892Z"
+        "uploadedAt": "2026-11-16T05:55:46.538Z"
       },
       {
         "id": "demo_voice_hinglish",
@@ -60,7 +90,21 @@
         "durationSec": 11,
         "transcript": "Dekho, AI tab kaam aata hai jab woh aapki apni awaaz aur soch ko amplify kare, replace nahi.",
         "verified": true,
-        "uploadedAt": "2026-11-13T05:18:25.892Z"
+        "uploadedAt": "2026-11-16T05:55:46.538Z"
+      },
+      {
+        "id": "demo_voice_hindi",
+        "label": "Natural Hindi Storytelling Sample",
+        "language": "Hindi",
+        "emotion": "Authoritative",
+        "url": "",
+        "mimeType": "audio/wav",
+        "filename": "demo_hindi_editorial_sample.wav",
+        "sizeBytes": 428000,
+        "durationSec": 12,
+        "transcript": "सीधे पॉइंट पर आते हैं — सही स्क्रिप्ट और प्राकृतिक हिंदी आवाज़ ही दर्शक को अंत तक जोड़कर रखती है।",
+        "verified": true,
+        "uploadedAt": "2026-11-16T05:55:46.538Z"
       }
     ],
     "personality": {
@@ -78,7 +122,11 @@
       ],
       "primaryLanguage": "Hinglish",
       "preferredVoiceProvider": "free_hindi_neural",
-      "preferredVoiceId": "hi-IN-MadhurNeural"
+      "preferredVoiceId": "hi-IN-MadhurNeural",
+      "voiceProsodyPreset": "warm_storyteller",
+      "voicePitchWarmth": "warm",
+      "voicePace": 0.95,
+      "naturalPausesEnabled": true
     },
     "consent": {
       "attested": true,
@@ -88,14 +136,12 @@
       "requireAiDisclosure": true
     },
     "readiness": {
-      "overallScore": 79,
-      "faceScore": 60,
-      "voiceScore": 75,
+      "overallScore": 100,
+      "faceScore": 100,
+      "voiceScore": 100,
       "personalityScore": 100,
       "consentVerified": true,
-      "missingItems": [
-        "Right profile portrait"
-      ],
+      "missingItems": [],
       "externalModelStatus": "local_ready"
     }
   },
@@ -499,6 +545,84 @@
   ],
   "integrations": [
     {
+      "id": "n8n_http_node",
+      "name": "n8n HTTP Request / Instagram API Node",
+      "category": "Automation",
+      "tier": "balanced",
+      "nodeKind": "http_node",
+      "description": "Configurable n8n-style HTTP Request Node supporting GET/POST/PUT/PATCH, Bearer/Header/Query auth tokens, custom headers JSON, and template variables ({{videoUrl}}, {{caption}}, {{hashtags}}).",
+      "configured": false,
+      "endpointUrl": "",
+      "httpMethod": "POST",
+      "authType": "bearer",
+      "authHeaderName": "Authorization",
+      "apiToken": "",
+      "customHeadersJson": "{\n  \"Content-Type\": \"application/json\",\n  \"X-Source\": \"TwinForge-Studio\"\n}",
+      "payloadTemplateJson": "{\n  \"title\": \"{{title}}\",\n  \"platform\": \"{{platform}}\",\n  \"videoUrl\": \"{{videoUrl}}\",\n  \"thumbnailUrl\": \"{{thumbnailUrl}}\",\n  \"caption\": \"{{caption}}\",\n  \"hashtags\": \"{{hashtags}}\",\n  \"aspectRatio\": \"{{aspectRatio}}\",\n  \"scheduledFor\": \"{{scheduledFor}}\"\n}",
+      "status": "unconfigured",
+      "capabilities": [
+        "Method GET/POST/PUT/PATCH",
+        "Bearer / API Key / Query Auth",
+        "Custom Headers JSON",
+        "Live Test Execution"
+      ],
+      "supportsVoiceCloning": false,
+      "lastCheckedAt": null,
+      "notes": "Works like an n8n HTTP Request node or Meta webhook bridge. Use Test Node to inspect live HTTP response codes and JSON body."
+    },
+    {
+      "id": "facebook_direct",
+      "name": "Facebook Page Graph API Direct Post",
+      "category": "Social Publishing",
+      "tier": "balanced",
+      "nodeKind": "facebook_graph",
+      "description": "Connect your Facebook Page ID & Page Access Token to upload and publish Reels/Videos directly to your Page via Meta Graph API v21.0.",
+      "configured": false,
+      "endpointUrl": "https://graph.facebook.com/v21.0",
+      "httpMethod": "POST",
+      "authType": "bearer",
+      "authHeaderName": "Authorization",
+      "apiToken": "",
+      "accountId": "",
+      "publicMediaBaseUrl": "",
+      "status": "unconfigured",
+      "capabilities": [
+        "Direct Page Video Post",
+        "Reels Ready MP4",
+        "Page Token Auth",
+        "Live Response Receipt"
+      ],
+      "supportsVoiceCloning": false,
+      "lastCheckedAt": null,
+      "notes": "Enter your Facebook Page ID and long-lived Page Access Token with pages_manage_posts & publish_video permissions."
+    },
+    {
+      "id": "instagram_direct",
+      "name": "Instagram Graph API Direct Post",
+      "category": "Social Publishing",
+      "tier": "balanced",
+      "nodeKind": "instagram_graph",
+      "description": "Connect your Instagram Professional/Creator Account ID & Meta Access Token to create Reels containers and publish directly via Graph API v21.0.",
+      "configured": false,
+      "endpointUrl": "https://graph.facebook.com/v21.0",
+      "httpMethod": "POST",
+      "authType": "bearer",
+      "authHeaderName": "Authorization",
+      "apiToken": "",
+      "accountId": "",
+      "publicMediaBaseUrl": "",
+      "status": "unconfigured",
+      "capabilities": [
+        "Reels Media Container",
+        "Auto Caption & Hashtags",
+        "Graph API v21.0 Publish",
+        "Token & ID Verification"
+      ],
+      "supportsVoiceCloning": false,
+      "lastCheckedAt": null,
+      "notes": "Requires IG User ID, Meta Graph Access Token (instagram_content_publish), and an HTTPS public media URL so Meta servers can fetch the MP4."
+    },
+    {
       "id": "free_hindi_neural",
       "name": "Free Natural Hindi & Indian Neural Voice",
       "category": "Voice Engine",
@@ -696,7 +820,11 @@
       ],
       "supportsVoiceCloning": false,
       "lastCheckedAt": null,
-      "notes": "Connect an authorized social publishing webhook to execute live post deliveries."
+      "notes": "Connect an authorized social publishing webhook to execute live post deliveries.",
+      "nodeKind": "standard",
+      "httpMethod": "POST",
+      "authType": "bearer",
+      "authHeaderName": "Authorization"
     }
   ],
   "auditLogs": [

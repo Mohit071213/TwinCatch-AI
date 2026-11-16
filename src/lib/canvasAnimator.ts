@@ -1,9 +1,13 @@
 import type {
+  AnimationPresetMode,
   CameraMotionType,
+  ColorGradePreset,
   MotionGraphicPreset,
   PresenterVisualMode,
   ProductionStyle,
   SceneVisualBeat,
+  ShootingAnglePreset,
+  TransitionStylePreset,
   TwinLanguage,
   VideoFormatType,
 } from '../types';
@@ -13,6 +17,10 @@ export interface CanvasAnimationParams {
   visualBeats?: SceneVisualBeat[];
   presenterMode?: PresenterVisualMode;
   productionStyle?: ProductionStyle;
+  shootingAngle?: ShootingAnglePreset;
+  colorGrade?: ColorGradePreset;
+  animationMode?: AnimationPresetMode;
+  transitionStyle?: TransitionStylePreset;
   format?: VideoFormatType;
   audioUrl?: string;
   title: string;
@@ -117,6 +125,85 @@ function drawRoundedRectPath(
   ctx.arcTo(x, y + h, x, y, rad);
   ctx.arcTo(x, y, x + w, y, rad);
   ctx.closePath();
+}
+
+function createFilmGrainPattern(ctx: CanvasRenderingContext2D): CanvasPattern | null {
+  try {
+    const tile = document.createElement('canvas');
+    tile.width = 96;
+    tile.height = 96;
+    const tctx = tile.getContext('2d');
+    if (!tctx) return null;
+    const imgData = tctx.createImageData(96, 96);
+    const data = imgData.data;
+    for (let i = 0; i < data.length; i += 4) {
+      const v = Math.floor(Math.random() * 255);
+      data[i] = v;
+      data[i + 1] = v;
+      data[i + 2] = v;
+      data[i + 3] = 28;
+    }
+    tctx.putImageData(imgData, 0, 0);
+    return ctx.createPattern(tile, 'repeat');
+  } catch {
+    return null;
+  }
+}
+
+function drawBlurredBackdropPlate(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  w: number,
+  stageH: number,
+  zoom: number
+) {
+  ctx.save();
+  try {
+    ctx.filter = 'blur(16px) brightness(0.52) saturate(1.15)';
+    drawCoverBox(ctx, img, -16, -16, w + 32, stageH + 32, zoom, 0, 0, 0, 0.92);
+  } catch {
+    drawCoverBox(ctx, img, 0, 0, w, stageH, zoom, 0, 0, 0, 0.42);
+  }
+  ctx.restore();
+}
+
+function drawColorGradeFinishing(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  stageH: number,
+  grade: ColorGradePreset,
+  t: number
+) {
+  ctx.save();
+  if (grade === 'teal_amber_cinema') {
+    const g = ctx.createLinearGradient(0, 0, w, stageH);
+    g.addColorStop(0, 'rgba(216, 146, 72, 0.14)');
+    g.addColorStop(0.5, 'rgba(0, 0, 0, 0)');
+    g.addColorStop(1, 'rgba(24, 96, 112, 0.19)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, stageH);
+  } else if (grade === 'kodak_soft') {
+    ctx.fillStyle = 'rgba(235, 198, 138, 0.10)';
+    ctx.fillRect(0, 0, w, stageH);
+  } else if (grade === 'noir_contrast') {
+    ctx.fillStyle = 'rgba(12, 12, 14, 0.24)';
+    ctx.fillRect(0, 0, w, stageH);
+  } else if (grade === 'vibrant_creator') {
+    ctx.fillStyle = 'rgba(224, 159, 90, 0.06)';
+    ctx.fillRect(0, 0, w, stageH);
+  } else if (grade === 'warm_editorial') {
+    ctx.fillStyle = 'rgba(182, 154, 101, 0.08)';
+    ctx.fillRect(0, 0, w, stageH);
+  }
+
+  // Subtle anamorphic lens flare sweep across upper stage
+  const flareX = w * (0.15 + 0.7 * (0.5 + 0.5 * Math.sin(t * 0.45)));
+  const flareGrad = ctx.createRadialGradient(flareX, stageH * 0.12, 4, flareX, stageH * 0.12, w * 0.34);
+  flareGrad.addColorStop(0, 'rgba(255, 232, 188, 0.14)');
+  flareGrad.addColorStop(1, 'rgba(255, 232, 188, 0)');
+  ctx.fillStyle = flareGrad;
+  ctx.fillRect(0, 0, w, stageH);
+  ctx.restore();
 }
 
 function drawCoverBox(
@@ -251,11 +338,64 @@ function drawThematicAtmosphere(
 
 function resolveBeatCameraMotion(
   cameraMotion: CameraMotionType | undefined,
+  shootingAngle: ShootingAnglePreset | undefined,
   localProgress: number,
   t: number,
   sceneIdx: number,
   baseZoom = 1.05
 ): { zoom: number; panX: number; panY: number; rot: number } {
+  const easeOut = 1 - Math.pow(1 - Math.min(1, localProgress * 3.5), 3);
+
+  if (shootingAngle === 'close_up_intimate') {
+    return {
+      zoom: baseZoom + 0.16 + localProgress * 0.12,
+      panX: Math.sin(t * 1.3) * 4,
+      panY: -8 + localProgress * 6,
+      rot: 0,
+    };
+  }
+  if (shootingAngle === 'low_angle_hero') {
+    return {
+      zoom: baseZoom + 0.09 + easeOut * 0.08 + localProgress * 0.06,
+      panX: (sceneIdx % 2 === 0 ? -1 : 1) * 8,
+      panY: 18 - localProgress * 28,
+      rot: -0.018,
+    };
+  }
+  if (shootingAngle === 'wide_establishing') {
+    return {
+      zoom: baseZoom + 0.14 - localProgress * 0.12,
+      panX: (-16 + localProgress * 32) * (sceneIdx % 2 === 0 ? 1 : -1),
+      panY: Math.cos(t * 0.9) * 3,
+      rot: 0,
+    };
+  }
+  if (shootingAngle === 'over_shoulder_frame') {
+    const side = sceneIdx % 2 === 0 ? 1 : -1;
+    return {
+      zoom: baseZoom + 0.12 + localProgress * 0.05,
+      panX: side * (22 - localProgress * 18),
+      panY: Math.sin(t * 1.1) * 4,
+      rot: side * 0.008,
+    };
+  }
+  if (shootingAngle === 'dutch_dynamic') {
+    return {
+      zoom: baseZoom + 0.1 + localProgress * 0.11,
+      panX: (-18 + localProgress * 36) * (sceneIdx % 2 === 0 ? 1 : -1),
+      panY: (-10 + localProgress * 20),
+      rot: (sceneIdx % 2 === 0 ? 1 : -1) * 0.048,
+    };
+  }
+  if (shootingAngle === 'macro_broll_insert') {
+    return {
+      zoom: baseZoom + 0.18 + localProgress * 0.14,
+      panX: Math.cos(t * 0.8) * 10,
+      panY: Math.sin(t * 0.9) * 8,
+      rot: 0,
+    };
+  }
+
   switch (cameraMotion) {
     case 'punch_zoom': {
       const kick = localProgress < 0.18 ? 0.16 * Math.sin((localProgress / 0.18) * Math.PI * 0.6) : 0.06;
@@ -779,6 +919,19 @@ export async function renderCanvasMotionVideo(params: CanvasAnimationParams): Pr
   const startTime = performance.now();
   const totalMs = targetDuration * 1000;
 
+  const grainPattern = createFilmGrainPattern(ctx);
+  const chosenGrade: ColorGradePreset = params.colorGrade || 'teal_amber_cinema';
+  const chosenAnimMode: AnimationPresetMode = params.animationMode || 'cinematic_layered';
+  const chosenTransition: TransitionStylePreset = params.transitionStyle || 'whip_pan';
+  const animGain =
+    chosenAnimMode === 'high_energy_reels'
+      ? 1.35
+      : chosenAnimMode === 'dynamic_storyboard'
+        ? 1.15
+        : chosenAnimMode === 'minimal_documentary'
+          ? 0.55
+          : 1.0;
+
   await new Promise<void>((resolveLoop) => {
     const drawFrame = () => {
       const elapsedMs = performance.now() - startTime;
@@ -806,6 +959,11 @@ export async function renderCanvasMotionVideo(params: CanvasAnimationParams): Pr
 
       const activeBeat = beats[sceneIdx];
       const activeMood = activeBeat?.themeMood || 'studio_editorial';
+      const activeAngle: ShootingAnglePreset =
+        params.shootingAngle && params.shootingAngle !== 'auto_director'
+          ? params.shootingAngle
+          : activeBeat?.shootingAngle || 'eye_level_studio';
+
       const accentHex =
         resolvedStyle === 'comedy_skit'
           ? '#E09F5A'
@@ -813,8 +971,10 @@ export async function renderCanvasMotionVideo(params: CanvasAnimationParams): Pr
             ? '#7CC6C4'
             : activeBeat?.accentHex || '#B69A65';
       const beatImg = loadedBeatImgs[sceneIdx] || anyValidBeatImg;
-      const primaryPresenter = loadedPresenters[0] || null;
-      const altPresenter = loadedPresenters[1 % Math.max(1, loadedPresenters.length)] || primaryPresenter;
+      const primaryPresenter =
+        loadedPresenters[sceneIdx % Math.max(1, loadedPresenters.length)] || loadedPresenters[0] || null;
+      const altPresenter =
+        loadedPresenters[(sceneIdx + 1) % Math.max(1, loadedPresenters.length)] || primaryPresenter;
 
       // 1. Dynamic thematic backdrop layer tuned to production style & script mood
       drawThematicAtmosphere(
@@ -833,35 +993,50 @@ export async function renderCanvasMotionVideo(params: CanvasAnimationParams): Pr
 
       const isComedy = resolvedStyle === 'comedy_skit';
       const isExplainer = resolvedStyle === 'visual_explainer';
-      const isCinema = resolvedStyle === 'story_cinema';
+      const isCinema = resolvedStyle === 'story_cinema' || chosenAnimMode === 'cinematic_layered';
       const isPunchlineBeat = Boolean(activeBeat?.isPunchline);
 
-      // Camera motion choreography driven by selected Prompt-Library cameraMotion + beat timing
+      // Camera motion choreography driven by selected Prompt-Library cameraMotion + Shooting Angle
       const beatCam = resolveBeatCameraMotion(
         activeBeat?.cameraMotion,
+        activeAngle,
         localProgress,
         t,
         sceneIdx,
         baseZoom
       );
 
+      // Whip-pan / ease-out entrance offset on first 10% of each beat cut
+      const cutEntry = Math.min(1, localProgress / 0.10);
+      const cutEase = 1 - Math.pow(1 - cutEntry, 3);
+      const whipOffset =
+        sceneIdx > 0 && chosenTransition === 'whip_pan'
+          ? (1 - cutEase) * (sceneIdx % 2 === 0 ? 96 : -96)
+          : 0;
+
       // Dynamic kinetic camera impulse for Comedy vs calm flow for Cinema
       const comedyPunchKick =
         isComedy && localProgress < 0.16
-          ? 0.14 * Math.sin((localProgress / 0.16) * Math.PI)
+          ? 0.14 * Math.sin((localProgress / 0.16) * Math.PI) * animGain
           : isComedy && isPunchlineBeat
-            ? 0.08 + speechEnergy * 0.06
+            ? (0.08 + speechEnergy * 0.06) * animGain
             : 0;
-      const shakeX = isComedy && isPunchlineBeat && localProgress < 0.3 ? Math.sin(t * 36) * 5 : 0;
-      const shakeY = isComedy && isPunchlineBeat && localProgress < 0.3 ? Math.cos(t * 42) * 3 : 0;
+      const shakeX = isComedy && isPunchlineBeat && localProgress < 0.3 ? Math.sin(t * 36) * 5 * animGain : 0;
+      const shakeY = isComedy && isPunchlineBeat && localProgress < 0.3 ? Math.cos(t * 42) * 3 * animGain : 0;
 
-      const breathe = (isComedy ? 0.02 : 0.014) * Math.sin(t * (isComedy ? 2.8 : 1.9));
-      const swayX = 8 * Math.sin(t * (isComedy ? 1.9 : 1.25)) + shakeX;
-      const swayY = 5 * Math.cos(t * (isComedy ? 2.3 : 1.6)) - speechEnergy * 4 + shakeY;
+      const breathe = (isComedy ? 0.02 : 0.014) * Math.sin(t * (isComedy ? 2.8 : 1.9)) * animGain;
+      const swayX = 8 * Math.sin(t * (isComedy ? 1.9 : 1.25)) * animGain + shakeX + whipOffset;
+      const swayY = 5 * Math.cos(t * (isComedy ? 2.3 : 1.6)) * animGain - speechEnergy * 4 + shakeY;
       const tilt =
-        (isComedy ? 0.022 : 0.01) * Math.sin(t * (isComedy ? 2.2 : 1.1)) +
+        (isComedy ? 0.022 : 0.01) * Math.sin(t * (isComedy ? 2.2 : 1.1)) * animGain +
         speechEnergy * (isComedy ? 0.014 : 0.006) * Math.sin(t * 7.5) +
         beatCam.rot;
+
+      // 2. Depth-of-Field Blurred Cinematic Atmospheric Backdrop Plate for non-faceless layered modes
+      const backdropImg = beatImg || primaryPresenter;
+      if (backdropImg && chosenAnimMode === 'cinematic_layered') {
+        drawBlurredBackdropPlate(ctx, backdropImg, w, stageH, 1.18 + localProgress * 0.05);
+      }
 
       if (isFaceless || !primaryPresenter) {
         if (beatImg) {
@@ -1156,18 +1331,37 @@ export async function renderCanvasMotionVideo(params: CanvasAnimationParams): Pr
         }
       }
 
-      // Snappy scene transition flash in Comedy Skit mode on each new beat
-      if (isComedy && sceneIdx > 0 && localProgress < 0.045) {
-        const flashAlpha = (1 - localProgress / 0.045) * 0.38;
-        ctx.fillStyle = `rgba(255, 244, 224, ${flashAlpha.toFixed(3)})`;
-        ctx.fillRect(0, 0, w, stageH);
+      // Cinema transition choreography at start of each beat
+      if (sceneIdx > 0 && localProgress < 0.08) {
+        const transFrac = 1 - localProgress / 0.08;
+        if (chosenTransition === 'film_fade') {
+          ctx.fillStyle = `rgba(12, 11, 10, ${(transFrac * 0.72).toFixed(3)})`;
+          ctx.fillRect(0, 0, w, stageH);
+        } else if (chosenTransition === 'cinematic_dissolve') {
+          ctx.fillStyle = `rgba(246, 243, 236, ${(transFrac * 0.22).toFixed(3)})`;
+          ctx.fillRect(0, 0, w, stageH);
+        } else if (isComedy) {
+          ctx.fillStyle = `rgba(255, 244, 224, ${(transFrac * 0.34).toFixed(3)})`;
+          ctx.fillRect(0, 0, w, stageH);
+        }
       }
 
-      // Cinema letterbox bars for Story Cinema mode
-      if (isCinema) {
+      // Color grade LUT & anamorphic lens flare sweep
+      drawColorGradeFinishing(ctx, w, stageH, chosenGrade, t);
+
+      // Subtle 35mm Film Grain texture pass
+      if (grainPattern && (chosenAnimMode === 'cinematic_layered' || chosenGrade === 'kodak_soft' || chosenGrade === 'noir_contrast')) {
+        ctx.save();
+        ctx.fillStyle = grainPattern;
+        ctx.fillRect(0, 0, w, stageH);
+        ctx.restore();
+      }
+
+      // Cinema letterbox bars for Story Cinema or Wide Establishing framing
+      if (isCinema || activeAngle === 'wide_establishing') {
         ctx.fillStyle = '#0F0E0C';
-        ctx.fillRect(0, 0, w, 16);
-        ctx.fillRect(0, stageH - 16, w, 16);
+        ctx.fillRect(0, 0, w, 14);
+        ctx.fillRect(0, stageH - 14, w, 14);
       }
 
       // Subtle eye-blink micro-cadence + vignette
@@ -1198,25 +1392,27 @@ export async function renderCanvasMotionVideo(params: CanvasAnimationParams): Pr
       // Relatable Animated Motion-Graphic Card illustrating the current beat
       drawRelatableOverlayCard(ctx, w, stageH, activeBeat, localProgress, resolvedStyle, accentHex, t);
 
-      // Top Watermark & Dynamic Beat Headline Badge matched to active script segment
+      // Top Watermark & Dynamic Beat + Shooting Angle Badge
       if (params.aiDisclosureWatermark) {
         ctx.fillStyle = 'rgba(26, 25, 23, 0.76)';
-        ctx.fillRect(24, 24, Math.min(w - 220, 310), 28);
+        ctx.fillRect(24, 24, Math.min(w - 240, 290), 28);
         ctx.fillStyle = '#F6F3EC';
         ctx.font = '600 11px monospace';
-        ctx.fillText((params.watermarkText || 'AI DIGITAL TWIN · AUTHORIZED').slice(0, 34), 34, 42);
+        ctx.fillText((params.watermarkText || 'AI DIGITAL TWIN · AUTHORIZED').slice(0, 32), 34, 42);
       }
 
+      const angleShort = activeAngle.replace(/_/g, ' ').toUpperCase().slice(0, 14);
       const beatHeadline = (
         activeBeat?.headline ||
         (progress < 0.3 ? '01 OPENING HOOK' : progress < 0.72 ? '02 KEY INSIGHT' : '03 TAKEAWAY')
-      ).slice(0, 26);
-      ctx.font = '700 12px monospace';
-      const badgeW = Math.min(w - 60, Math.max(132, Math.round(ctx.measureText(beatHeadline).width + 28)));
+      ).slice(0, 24);
+      const topRightText = `${beatHeadline} · ${angleShort}`.slice(0, 34);
+      ctx.font = '700 11px monospace';
+      const badgeW = Math.min(w - 60, Math.max(140, Math.round(ctx.measureText(topRightText).width + 24)));
       ctx.fillStyle = accentHex;
       ctx.fillRect(w - badgeW - 24, 24, badgeW, 28);
       ctx.fillStyle = '#1A1917';
-      ctx.fillText(beatHeadline.toUpperCase(), w - badgeW - 10, 42);
+      ctx.fillText(topRightText, w - badgeW - 12, 42);
 
       // Lower Editorial Studio Band
       const bandTop = h - barHeight;

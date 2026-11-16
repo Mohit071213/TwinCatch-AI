@@ -18,13 +18,17 @@ import {
   Volume2,
 } from 'lucide-react';
 import type {
+  AnimationPresetMode,
   BackgroundStyleType,
+  ColorGradePreset,
   CostEstimate,
   PresenterVisualMode,
   ProductionStyle,
   QualityTier,
   SceneVisualBeat,
   ScriptGenre,
+  ShootingAnglePreset,
+  TransitionStylePreset,
   TwinLanguage,
   VideoFormatType,
   VideoRenderJob,
@@ -98,6 +102,10 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
       ? 'comedy_skit'
       : 'auto_genre'
   );
+  const [shootingAngle, setShootingAngle] = useState<ShootingAnglePreset>('auto_director');
+  const [colorGrade, setColorGrade] = useState<ColorGradePreset>('teal_amber_cinema');
+  const [animationMode, setAnimationMode] = useState<AnimationPresetMode>('cinematic_layered');
+  const [transitionStyle, setTransitionStyle] = useState<TransitionStylePreset>('auto_choreography');
   const [wardrobeNote, setWardrobeNote] = useState('Tailored charcoal blazer & ivory knit');
   const speedTouchedRef = useRef(false);
   const [speakingSpeed, setSpeakingSpeed] = useState(() => {
@@ -198,6 +206,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
     scriptWritingStyle,
     presenterMode,
     productionStyle,
+    shootingAngle,
     format,
     backgroundStyle,
     voiceIdentity,
@@ -266,6 +275,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
           backgroundStyle,
           presenterMode,
           productionStyle,
+          shootingAngle,
           voiceIdentity,
           portraitAssetId,
           beatTemplateOverrides: activeOverrides,
@@ -368,6 +378,7 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
               backgroundStyle,
               presenterMode,
               productionStyle,
+              shootingAngle,
               voiceIdentity,
               portraitAssetId,
               beatTemplateOverrides,
@@ -443,6 +454,10 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
             visualBeats: visualPlan.beats,
             presenterMode: visualPlan.presenterModeResolved,
             productionStyle,
+            shootingAngle,
+            colorGrade,
+            animationMode,
+            transitionStyle,
             format,
             audioUrl: audioForCanvas?.audioUrl,
             title: title || 'TwinForge Motion Production',
@@ -479,6 +494,10 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
               form.append('backgroundStyle', backgroundStyle);
               form.append('presenterMode', visualPlan.presenterModeResolved);
               form.append('productionStyle', productionStyle);
+              form.append('shootingAngle', shootingAngle);
+              form.append('colorGrade', colorGrade);
+              form.append('animationMode', animationMode);
+              form.append('transitionStyle', transitionStyle);
               form.append('wardrobeNote', wardrobeNote);
               form.append('speakingSpeed', String(speakingSpeed));
               form.append('targetDurationSec', String(effectiveDur));
@@ -531,6 +550,10 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                 backgroundStyle,
                 presenterMode: visualPlan.presenterModeResolved,
                 productionStyle,
+                shootingAngle,
+                colorGrade,
+                animationMode,
+                transitionStyle,
                 wardrobeNote,
                 speakingSpeed,
                 prosodyPreset:
@@ -590,6 +613,10 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
             backgroundStyle,
             presenterMode,
             productionStyle,
+            shootingAngle,
+            colorGrade,
+            animationMode,
+            transitionStyle,
             wardrobeNote,
             speakingSpeed,
             prosodyPreset:
@@ -727,8 +754,8 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                 id: 'balanced' as QualityTier,
                 num: '02',
                 title: 'BALANCED QUALITY MODE',
-                subtitle: 'Gemini 3.8 Expressive TTS + Multi-Scene FFmpeg Cuts',
-                cost: '~$0.01–$0.03 / min',
+                subtitle: 'Free-Tier Gemini 3.8 Expressive TTS + Multi-Angle Cinema FFmpeg',
+                cost: '$0.00 Free Tier',
               },
               {
                 id: 'premium' as QualityTier,
@@ -874,14 +901,37 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
 
               {/* Interchangeable Voice Engine + Live Audition */}
               <div className="p-4 bg-[#F6F3EC] border border-[#E4DDD0] rounded-sm space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[#242421] inline-flex items-center gap-1.5">
                     <Mic className="w-3.5 h-3.5 text-[#B69A65]" />
-                    <span>Realistic Voice Engine &amp; Audition</span>
+                    <span>Realistic Voice Engine &amp; Free Hindi / Gemini TTS</span>
                   </div>
-                  <span className="text-[11px] font-mono text-[#77766F]">
-                    Never silently swaps personal clone
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLanguage('Hindi');
+                        setVoiceProvider('free_hindi_neural');
+                        setVoiceIdentity('hi-IN-SwaraNeural');
+                        setActiveAudition(null);
+                      }}
+                      className="text-[11px] font-mono text-[#8A5A1A] hover:underline whitespace-nowrap"
+                    >
+                      Use Natural Hindi ($0.00)
+                    </button>
+                    <span className="text-[#E4DDD0]">·</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setVoiceProvider('gemini_flash_tts');
+                        setVoiceIdentity('Kore');
+                        setActiveAudition(null);
+                      }}
+                      className="text-[11px] font-mono text-[#777D68] hover:underline whitespace-nowrap"
+                    >
+                      Use Gemini Free Voice ($0.00)
+                    </button>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -897,12 +947,12 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                       }}
                       className="w-full px-2.5 py-1.5 border border-[#E4DDD0] bg-[#FFFFFF] text-[12.5px] rounded-sm"
                     >
-                      <option value="free_hindi_neural">Free Natural Hindi / Indian Neural ($0.00)</option>
+                      <option value="free_hindi_neural">Free Natural Hindi Neural ($0.00)</option>
+                      <option value="gemini_flash_tts">Gemini 3.8 Flash TTS · Breath Cues (Free Tier $0.00)</option>
+                      <option value="gemini_lite_tts">Gemini 3.8 Flash Lite TTS (Free Tier $0.00)</option>
                       <option value="ambient_studio">Free Studio Rhythm Bed ($0.00)</option>
-                      <option value="gemini_flash_tts">Gemini 3.8 Flash TTS</option>
-                      <option value="gemini_lite_tts">Gemini 3.8 Flash Lite TTS</option>
                       <option value="kokoro_local">Local Kokoro / Piper Endpoint</option>
-                      <option value="elevenlabs_webhook">ElevenLabs Personal Clone</option>
+                      <option value="elevenlabs_webhook">ElevenLabs Personal Clone (Paid)</option>
                     </select>
                   </div>
                   <div>
@@ -1175,6 +1225,91 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                 </div>
               </div>
 
+              {/* Cinema Direction: Shooting Angles, Color Grading LUTs, Layered Animation & Transitions */}
+              <div className="p-4 bg-[#FAF8F4] border border-[#E4DDD0] rounded-sm space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-[11.5px] font-semibold uppercase tracking-[0.08em] text-[#242421] inline-flex items-center gap-1.5">
+                    <Film className="w-3.5 h-3.5 text-[#B69A65]" />
+                    <span>Cinematic Shooting Angles, Grading LUT &amp; Scene Animation</span>
+                  </div>
+                  <span className="text-[11px] font-mono text-[#77766F]">
+                    Layered DoF + Film Grain + Multi-Angle Switching
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#77766F] mb-1">
+                      Shooting Angle
+                    </label>
+                    <select
+                      value={shootingAngle}
+                      onChange={(e) => setShootingAngle(e.target.value as ShootingAnglePreset)}
+                      className="w-full px-2.5 py-1.5 border border-[#E4DDD0] bg-[#FFFFFF] text-[12px] rounded-sm"
+                    >
+                      <option value="auto_director">Auto Director (Cycle Angles)</option>
+                      <option value="eye_level_studio">Eye-Level Studio Framing</option>
+                      <option value="low_angle_hero">Low-Angle Hero Look-Up</option>
+                      <option value="over_shoulder_frame">Over-Shoulder Editorial</option>
+                      <option value="wide_establishing">Wide Establishing Scene</option>
+                      <option value="close_up_intimate">Close-Up Intimate Tight</option>
+                      <option value="dutch_dynamic">Dutch Dynamic Tilt</option>
+                      <option value="macro_broll_insert">Macro B-Roll Insert</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#77766F] mb-1">
+                      Cinema Color Grade
+                    </label>
+                    <select
+                      value={colorGrade}
+                      onChange={(e) => setColorGrade(e.target.value as ColorGradePreset)}
+                      className="w-full px-2.5 py-1.5 border border-[#E4DDD0] bg-[#FFFFFF] text-[12px] rounded-sm"
+                    >
+                      <option value="teal_amber_cinema">Teal &amp; Amber Cinema LUT</option>
+                      <option value="warm_editorial">Warm Studio Editorial</option>
+                      <option value="kodak_soft">Kodak Soft Film Emulsion</option>
+                      <option value="noir_contrast">Noir Studio High-Contrast</option>
+                      <option value="vibrant_creator">Vibrant Social Creator</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#77766F] mb-1">
+                      Animation Preset
+                    </label>
+                    <select
+                      value={animationMode}
+                      onChange={(e) => setAnimationMode(e.target.value as AnimationPresetMode)}
+                      className="w-full px-2.5 py-1.5 border border-[#E4DDD0] bg-[#FFFFFF] text-[12px] rounded-sm"
+                    >
+                      <option value="cinematic_layered">Cinematic Layered Depth</option>
+                      <option value="dynamic_storyboard">Dynamic Storyboard Motion</option>
+                      <option value="high_energy_reels">High-Energy Social Reels</option>
+                      <option value="minimal_documentary">Minimal Documentary Push</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#77766F] mb-1">
+                      Scene Transition
+                    </label>
+                    <select
+                      value={transitionStyle}
+                      onChange={(e) => setTransitionStyle(e.target.value as TransitionStylePreset)}
+                      className="w-full px-2.5 py-1.5 border border-[#E4DDD0] bg-[#FFFFFF] text-[12px] rounded-sm"
+                    >
+                      <option value="auto_choreography">Auto Choreography (Mix)</option>
+                      <option value="whip_pan">Whip-Pan Energy Swipe</option>
+                      <option value="cinematic_dissolve">Cinematic Cross-Dissolve</option>
+                      <option value="film_fade">Warm Film Black Dip</option>
+                      <option value="geometric_iris">Geometric Iris Wipe</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
               {/* Gemini Vision Prompt-Library Storyboard & Presenter Preview */}
               <div className="p-4 bg-[#FAF8F4] border border-[#E4DDD0] rounded-sm space-y-3">
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
@@ -1258,8 +1393,11 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                         <Sparkles className="w-3.5 h-3.5 text-[#B69A65]" />
                         <span>
                           {plannedVisuals.visionAnalysisUsed
-                            ? 'Gemini Vision · Portrait & Context Matched'
+                            ? 'Gemini Vision · Multi-Angle & Context Matched'
                             : 'Prompt-Library · 6/6 Beats Matched'}
+                          {plannedVisuals.presenterImageUrls.length > 1
+                            ? ` · ${plannedVisuals.presenterImageUrls.length} Angles`
+                            : ''}
                         </span>
                       </div>
                     </div>
@@ -1304,15 +1442,15 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
 
                               <div className="p-2.5 space-y-1.5">
                                 <div className="text-[10px] font-mono uppercase tracking-[0.06em] text-[#77766F] truncate">
-                                  {(b.cameraMotion || 'cinema_push').replace(/_/g, ' ')} ·{' '}
-                                  {(b.motionGraphicPreset || 'kinetic_waveform_banner').replace(/_/g, ' ')}
+                                  {(b.shootingAngle || 'eye_level_studio').replace(/_/g, ' ')} ·{' '}
+                                  {(b.cameraMotion || 'cinema_push').replace(/_/g, ' ')}
                                   {isOverridden ? ' · Pinned' : ''}
                                 </div>
                                 <div className="text-[12px] font-semibold text-[#242421] leading-tight line-clamp-1">
                                   {b.promptTemplateName || b.headline}
                                 </div>
                                 {b.calloutText && (
-                                  <div className="text-[10.5px] font-semibold text-[#8A5A1A] border-l-2 border-[#B69A65] pl-2 line-clamp-1">
+                                  <div className="text-[10.5px] font-semibold text-[#8A5A1A] line-clamp-1">
                                     {b.calloutText}
                                   </div>
                                 )}

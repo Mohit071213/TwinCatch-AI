@@ -236,6 +236,21 @@ export const DigitalTwinView: React.FC<DigitalTwinViewProps> = ({
     }
   };
 
+  const handleQuickVerifyVoice = async (id: string) => {
+    setError('');
+    setBusyMsg('Marking voice sample verified for studio readiness...');
+    try {
+      const updated = await apiRequest<WorkspaceState>(`/api/twin/verify-voice/${id}`, mode, {
+        method: 'POST',
+      });
+      onUpdateWorkspace(updated);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusyMsg('');
+    }
+  };
+
   const handleDeleteVoice = async (id: string) => {
     try {
       const updated = await apiRequest<WorkspaceState>(`/api/twin/voice/${id}`, mode, { method: 'DELETE' });
@@ -313,13 +328,20 @@ export const DigitalTwinView: React.FC<DigitalTwinViewProps> = ({
           <div className="font-mono text-[24px] font-semibold tabular-nums text-[#242421]">
             {twin.readiness.overallScore}%
           </div>
-          <div className="text-[11.5px] text-[#77766F]">
-            External Training:{' '}
-            <span className="font-semibold text-[#242421]">
-              {twin.readiness.externalModelStatus === 'local_ready'
-                ? 'Ready for Local & API Assembly'
-                : 'Not Yet Trained / Incomplete'}
-            </span>
+          <div className="text-[11px] font-mono tabular-nums text-[#77766F]">
+            Face {twin.readiness.faceScore}% · Voice {twin.readiness.voiceScore}% · Persona{' '}
+            {twin.readiness.personalityScore}% · Consent {twin.readiness.consentVerified ? '100%' : '0%'}
+          </div>
+          <div className="text-[11.5px] text-[#77766F] mt-0.5">
+            {twin.readiness.overallScore === 100 ? (
+              <span className="font-semibold text-[#777D68]">
+                100% Complete · Multi-Angle &amp; Verified
+              </span>
+            ) : (
+              <span>
+                {twin.readiness.missingItems.length} item(s) left for 100%
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -545,11 +567,20 @@ export const DigitalTwinView: React.FC<DigitalTwinViewProps> = ({
                   ) : (
                     <span className="text-[11.5px] text-[#77766F] font-mono">Metadata-only demo sample</span>
                   )}
+                  {!vs.verified && (
+                    <button
+                      type="button"
+                      onClick={() => handleQuickVerifyVoice(vs.id)}
+                      className="px-3 py-1.5 bg-[#FAF8F4] border border-[#777D68]/50 text-[#242421] text-[12px] font-semibold rounded-sm hover:bg-[#E9ECE4] whitespace-nowrap shrink-0"
+                    >
+                      Quick Verify
+                    </button>
+                  )}
                   {vs.url && (
                     <button
                       type="button"
                       onClick={() => handleTranscribeVoice(vs.id)}
-                      className="px-3 py-1.5 border border-[#E4DDD0] text-[12px] font-semibold rounded-sm hover:border-[#B69A65]"
+                      className="px-3 py-1.5 border border-[#E4DDD0] text-[12px] font-semibold rounded-sm hover:border-[#B69A65] whitespace-nowrap shrink-0"
                     >
                       Verify via Transcribe
                     </button>
@@ -724,9 +755,9 @@ export const DigitalTwinView: React.FC<DigitalTwinViewProps> = ({
                   }}
                   className="w-full px-2.5 py-2 border border-[#E4DDD0] bg-[#FFFFFF] text-[12.5px] rounded-sm"
                 >
-                  <option value="free_hindi_neural">Free Natural Hindi / Conversational ($0.00)</option>
-                  <option value="gemini_flash_tts">Gemini 3.8 Flash TTS</option>
-                  <option value="gemini_lite_tts">Gemini 3.8 Flash Lite TTS</option>
+                  <option value="free_hindi_neural">Free Natural Hindi Neural ($0.00)</option>
+                  <option value="gemini_flash_tts">Gemini 3.8 Flash TTS · Breath Cues (Free Tier $0.00)</option>
+                  <option value="gemini_lite_tts">Gemini 3.8 Flash Lite TTS (Free Tier $0.00)</option>
                 </select>
               </div>
               <div className="sm:col-span-5">

@@ -91,9 +91,9 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
           <div className="font-mono text-[28px] font-semibold tabular-nums text-[#242421]">
             {twin.readiness.overallScore}%
           </div>
-          <div className="text-[12px] text-[#77766F]">
-            Face {twin.readiness.faceScore}% · Voice {twin.readiness.voiceScore}% · Persona{' '}
-            {twin.readiness.personalityScore}%
+          <div className="text-[12px] text-[#77766F] font-mono tabular-nums">
+            Face {twin.readiness.faceScore}% (35) · Voice {twin.readiness.voiceScore}% (30) · Persona{' '}
+            {twin.readiness.personalityScore}% (20) · Consent {twin.readiness.consentVerified ? '15' : '0'}/15
           </div>
         </div>
 
@@ -251,7 +251,11 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
             {twin.readiness.missingItems.length === 0 ? (
               <div className="flex items-center gap-2.5 text-[13px] text-[#777D68]">
                 <CheckCircle2 className="w-4 h-4 shrink-0" />
-                <span>Core studio references and consent attestation verified.</span>
+                <span>
+                  {twin.readiness.overallScore === 100
+                    ? '100% Twin Readiness Verified — multi-angle portraits, verified voice samples, persona & signed consent ready.'
+                    : 'Core studio references and consent attestation verified.'}
+                </span>
               </div>
             ) : (
               <div className="space-y-2">

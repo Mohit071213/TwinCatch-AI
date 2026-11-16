@@ -1,6 +1,10 @@
 import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
+import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 import type {
   ContentScriptPack,
   OnlineViralIdea,
@@ -593,21 +597,29 @@ export async function synthesizeGeminiSpeechWav(params: {
       : 'gemini-3.8-flash-lite-tts';
 
   const validVoices = ['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr', 'Aoede', 'Leda', 'Orus'];
-  const chosenVoice = validVoices.includes(params.voiceIdentity) ? params.voiceIdentity : 'Charon';
+  const chosenVoice = validVoices.includes(params.voiceIdentity) ? params.voiceIdentity : 'Kore';
+
+  let preparedText = params.text.trim();
+  if (primaryModel === 'gemini-3.8-flash-tts' && preparedText.length > 90) {
+    preparedText = preparedText
+      .replace(/([।?!.])\s+/g, '$1 <breath> ')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  }
 
   const langPrompt =
     params.language === 'Hindi'
-      ? 'Speak naturally in fluent conversational Hindi with warm Indian intonation: '
+      ? 'Speak naturally in fluent, conversational Delhi-Mumbai storytelling Hindi with warm human intonation and clear breathing pauses: '
       : params.language === 'Hinglish'
-        ? 'Speak with natural Indian Hinglish cadence: '
+        ? 'Speak with natural conversational urban Indian Hinglish rhythm and warm expression: '
         : '';
 
   const styleCue =
     params.language === 'Hindi'
-      ? `${params.emotion}, natural fluent Hindi Indian speaker with warm conversational cadence and clear pauses`
+      ? `${params.emotion}, warm conversational native Hindi narrator, smooth Indian diction, natural rhythmic pauses without robotic monotony`
       : params.language === 'Hinglish'
-        ? `${params.emotion}, natural urban Indian Hinglish creator delivery with authentic pronunciation`
-        : `${params.emotion}, articulate creator delivery with natural breathing and conversational pacing`;
+        ? `${params.emotion}, natural urban Indian Hinglish creator delivery with warm tonal inflection`
+        : `${params.emotion}, articulate broadcast creator delivery with natural breathing and engaging pacing`;
 
   const callGenerateTts = async (modelName: string, includeMetadata: boolean) => {
     const response = await ai.models.generateContent({
@@ -617,7 +629,7 @@ export async function synthesizeGeminiSpeechWav(params: {
           role: 'user',
           parts: [
             {
-              text: `${langPrompt}${params.text}`,
+              text: `${langPrompt}${modelName === 'gemini-3.8-flash-tts' ? preparedText : params.text}`,
               ...(includeMetadata && modelName.startsWith('gemini-3.8')
                 ? {
                     speechMetadata: {
@@ -673,7 +685,6 @@ export async function synthesizeGeminiSpeechWav(params: {
   }
 
   const rawBuffer = Buffer.from(inlineData.data, 'base64');
-  // Check if buffer already begins with RIFF WAV header; if raw L16 PCM, wrap with 44-byte RIFF WAV header
   const isRiffWav =
     rawBuffer.length >= 12 &&
     rawBuffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
@@ -700,11 +711,39 @@ export async function synthesizeGeminiSpeechWav(params: {
   }
 
   await fs.mkdir(path.dirname(params.outputWavPath), { recursive: true });
-  await fs.writeFile(params.outputWavPath, finalWav);
+  const rawTmpPath = `${params.outputWavPath}.raw.wav`;
+  await fs.writeFile(rawTmpPath, finalWav);
 
+  try {
+    await execFileAsync(
+      'ffmpeg',
+      [
+        '-y',
+        '-i',
+        rawTmpPath,
+        '-af',
+        'highpass=f=70,equalizer=f=210:t=q:w=1.1:g=2.0,equalizer=f=4800:t=q:w=1.3:g=-1.2,loudnorm=I=-16:TP=-1.5:LRA=9',
+        '-ar',
+        '24000',
+        '-ac',
+        '1',
+        '-c:a',
+        'pcm_s16le',
+        params.outputWavPath,
+      ],
+      { timeout: 15000 }
+    );
+    await fs.unlink(rawTmpPath).catch(() => {});
+  } catch {
+    await fs.rename(rawTmpPath, params.outputWavPath).catch(async () => {
+      await fs.writeFile(params.outputWavPath, finalWav);
+    });
+  }
+
+  const stat = await fs.stat(params.outputWavPath).catch(() => ({ size: finalWav.length }));
   return {
     wavPath: params.outputWavPath,
-    byteLength: finalWav.length,
+    byteLength: stat.size,
     modelUsed,
   };
 }

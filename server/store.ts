@@ -33,7 +33,9 @@ export function computeReadiness(twin: TwinProfile): TwinReadiness {
   const faceCats = new Set(twin.faceAssets.map((a) => a.category));
   const requiredFace = ['front', 'left_profile', 'right_profile', 'expression_talking'];
   const coveredFace = requiredFace.filter((c) => faceCats.has(c as any)).length;
-  const extraFaceBonus = Math.min(20, Math.max(0, twin.faceAssets.length - coveredFace) * 5);
+  const extraDistinctCats = Array.from(faceCats).filter((c) => !requiredFace.includes(c)).length;
+  const extraCountBonus = Math.max(0, twin.faceAssets.length - coveredFace) * 10;
+  const extraFaceBonus = Math.min(20, Math.max(extraDistinctCats * 10, extraCountBonus));
   const faceScore = Math.min(100, Math.round((coveredFace / requiredFace.length) * 80 + extraFaceBonus));
 
   const voiceCount = twin.voiceSamples.length;
@@ -41,7 +43,11 @@ export function computeReadiness(twin: TwinProfile): TwinReadiness {
   const voiceScore =
     voiceCount === 0
       ? 0
-      : Math.min(100, Math.round(Math.min(voiceCount, 3) * 25 + Math.min(verifiedVoice, 2) * 12.5));
+      : verifiedVoice >= 2
+        ? 100
+        : verifiedVoice === 1
+          ? Math.min(100, 75 + Math.max(0, voiceCount - 1) * 15)
+          : Math.min(75, voiceCount * 35);
 
   const p = twin.personality;
   const filledPersonality = [
@@ -61,6 +67,8 @@ export function computeReadiness(twin: TwinProfile): TwinReadiness {
   if (!faceCats.has('right_profile')) missingItems.push('Right profile portrait');
   if (!faceCats.has('expression_talking')) missingItems.push('Talking expression frame');
   if (voiceCount === 0) missingItems.push('Clean voice sample (.wav/.mp3)');
+  else if (verifiedVoice < 2) missingItems.push('Verify at least 2 voice samples (or upload a 2nd clip)');
+  if (personalityScore < 100) missingItems.push('Complete all 5 speaking persona fields');
   if (!consentVerified) missingItems.push('Signed biometric ownership consent');
 
   const overallScore = Math.round(
@@ -308,18 +316,85 @@ function defaultIntegrations(geminiOk: boolean, ffmpegOk: boolean): IntegrationC
       notes: 'Configure any webhook URL (e.g., your n8n production trigger) to dispatch live workflow events.',
     },
     {
-      id: 'social_graph_connector',
-      name: 'Instagram / TikTok / Facebook Publisher',
+      id: 'instagram_direct',
+      name: 'Instagram Graph API Direct Post',
       category: 'Social Publishing',
       tier: 'balanced',
-      description: 'External publishing webhook bridge. Items remain Draft/Scheduled until a delivery receipt is confirmed.',
+      nodeKind: 'instagram_graph',
+      description: 'Connect your Instagram Professional/Creator Account ID & Meta Access Token to create Reels containers and publish directly via Graph API v21.0.',
+      configured: Boolean(process.env.INSTAGRAM_IG_USER_ID && process.env.INSTAGRAM_ACCESS_TOKEN),
+      endpointUrl: 'https://graph.facebook.com/v21.0',
+      httpMethod: 'POST',
+      authType: 'bearer',
+      authHeaderName: 'Authorization',
+      apiToken: process.env.INSTAGRAM_ACCESS_TOKEN || '',
+      accountId: process.env.INSTAGRAM_IG_USER_ID || '',
+      publicMediaBaseUrl: process.env.PUBLIC_MEDIA_BASE_URL || '',
+      status: process.env.INSTAGRAM_IG_USER_ID && process.env.INSTAGRAM_ACCESS_TOKEN ? 'connected' : 'unconfigured',
+      capabilities: ['Reels Media Container', 'Auto Caption & Hashtags', 'Graph API v21.0 Publish', 'Token & ID Verification'],
+      supportsVoiceCloning: false,
+      lastCheckedAt: null,
+      notes: 'Requires IG User ID, Meta Graph Access Token (instagram_content_publish), and an HTTPS public media URL so Meta servers can fetch the MP4.',
+    },
+    {
+      id: 'facebook_direct',
+      name: 'Facebook Page Graph API Direct Post',
+      category: 'Social Publishing',
+      tier: 'balanced',
+      nodeKind: 'facebook_graph',
+      description: 'Connect your Facebook Page ID & Page Access Token to upload and publish Reels/Videos directly to your Page via Meta Graph API v21.0.',
+      configured: Boolean(process.env.FACEBOOK_PAGE_ID && process.env.FACEBOOK_ACCESS_TOKEN),
+      endpointUrl: 'https://graph.facebook.com/v21.0',
+      httpMethod: 'POST',
+      authType: 'bearer',
+      authHeaderName: 'Authorization',
+      apiToken: process.env.FACEBOOK_ACCESS_TOKEN || '',
+      accountId: process.env.FACEBOOK_PAGE_ID || '',
+      publicMediaBaseUrl: process.env.PUBLIC_MEDIA_BASE_URL || '',
+      status: process.env.FACEBOOK_PAGE_ID && process.env.FACEBOOK_ACCESS_TOKEN ? 'connected' : 'unconfigured',
+      capabilities: ['Direct Page Video Post', 'Reels Ready MP4', 'Page Token Auth', 'Live Response Receipt'],
+      supportsVoiceCloning: false,
+      lastCheckedAt: null,
+      notes: 'Enter your Facebook Page ID and long-lived Page Access Token with pages_manage_posts & publish_video permissions.',
+    },
+    {
+      id: 'n8n_http_node',
+      name: 'n8n HTTP Request / Instagram API Node',
+      category: 'Automation',
+      tier: 'balanced',
+      nodeKind: 'http_node',
+      description: 'Configurable n8n-style HTTP Request Node supporting GET/POST/PUT/PATCH, Bearer/Header/Query auth tokens, custom headers JSON, and template variables ({{videoUrl}}, {{caption}}, {{hashtags}}).',
+      configured: Boolean(n8nUrl),
+      endpointUrl: n8nUrl,
+      httpMethod: 'POST',
+      authType: 'bearer',
+      authHeaderName: 'Authorization',
+      apiToken: '',
+      customHeadersJson: '{\n  "Content-Type": "application/json",\n  "X-Source": "TwinForge-Studio"\n}',
+      payloadTemplateJson: '{\n  "title": "{{title}}",\n  "platform": "{{platform}}",\n  "videoUrl": "{{videoUrl}}",\n  "thumbnailUrl": "{{thumbnailUrl}}",\n  "caption": "{{caption}}",\n  "hashtags": "{{hashtags}}",\n  "aspectRatio": "{{aspectRatio}}",\n  "scheduledFor": "{{scheduledFor}}"\n}',
+      status: n8nUrl ? 'connected' : 'unconfigured',
+      capabilities: ['Method GET/POST/PUT/PATCH', 'Bearer / API Key / Query Auth', 'Custom Headers JSON', 'Live Test Execution'],
+      supportsVoiceCloning: false,
+      lastCheckedAt: null,
+      notes: 'Works like an n8n HTTP Request node or Meta webhook bridge. Use Test Node to inspect live HTTP response codes and JSON body.',
+    },
+    {
+      id: 'social_graph_connector',
+      name: 'Custom Social Publisher Webhook Bridge',
+      category: 'Social Publishing',
+      tier: 'balanced',
+      nodeKind: 'standard',
+      description: 'External publishing webhook bridge for TikTok, Make, Zapier, or custom schedulers. Items remain Draft/Scheduled until receipt is confirmed.',
       configured: false,
       endpointUrl: '',
+      httpMethod: 'POST',
+      authType: 'bearer',
+      authHeaderName: 'Authorization',
       status: 'unconfigured',
       capabilities: ['Reels / TikTok Prep', 'Cover Frame Export', 'Confirmed Receipt Tracking'],
       supportsVoiceCloning: false,
       lastCheckedAt: null,
-      notes: 'Connect an authorized social publishing webhook to execute live post deliveries.',
+      notes: 'Connect any custom social publishing webhook URL.',
     },
   ];
 }
@@ -337,7 +412,7 @@ function defaultBenchmarks(): ProviderBenchmark[] {
       scriptExcerpt: 'नमस्ते, मैं आपका डिजिटल ट्विन हूँ। आज हम तीस सेकंड की एक साफ रील तैयार करेंगे।',
       verified: false,
       processingMs: null,
-      resolutionOrSampleRate: '24kHz Mono WAV',
+      resolutionOrSampleRate: '24kHz Warm EQ WAV',
       estimatedCostPerMinUsd: 0,
       metrics: {
         faceSimilarity: null,
@@ -346,16 +421,16 @@ function defaultBenchmarks(): ProviderBenchmark[] {
         naturalExpressions: null,
         renderingQuality: null,
       },
-      notes: 'Zero-cost Hindi & Hinglish neural voice engine (hi-IN-MadhurNeural / hi-IN-SwaraNeural). Run benchmark to audition real synthesis latency.',
+      notes: 'Zero-cost Hindi & Hinglish neural voice engine (Swara/Madhur/Andrew Multilingual) with natural clause pauses and warm EQ mastering.',
       benchmarkedAt: null,
     },
     {
       id: 'bm_ffmpeg_local',
       providerId: 'ffmpeg_local',
-      providerName: 'Local FFmpeg Portrait Assembly',
+      providerName: 'Local FFmpeg Cinema Motion Director',
       category: 'video',
       tier: 'local_free',
-      referenceImageLabel: 'Creator Front Studio Portrait',
+      referenceImageLabel: 'Creator Multi-Angle Studio Portraits',
       voiceSampleLabel: 'Studio Speech Sample',
       scriptExcerpt: 'Short-form 9:16 editorial hook with burned-in captions.',
       verified: false,
@@ -369,21 +444,44 @@ function defaultBenchmarks(): ProviderBenchmark[] {
         naturalExpressions: null,
         renderingQuality: null,
       },
-      notes: 'Run benchmark to measure actual local FFmpeg processing latency and inspect playable MP4 output.',
+      notes: 'Run benchmark to measure actual local FFmpeg processing latency, color grade LUTs, shooting angles, and MP4 output.',
       benchmarkedAt: null,
     },
     {
       id: 'bm_gemini_lite_tts',
       providerId: 'gemini_lite_tts',
-      providerName: 'Gemini 3.8 Flash Lite TTS',
+      providerName: 'Gemini 3.8 Flash Lite TTS (Free Tier Eligible)',
       category: 'voice',
-      tier: 'balanced',
+      tier: 'local_free',
       referenceImageLabel: 'N/A (Audio Only)',
       voiceSampleLabel: 'Creator Reference Voice',
       scriptExcerpt: 'Three-second creator hook audition.',
       verified: false,
       processingMs: null,
-      resolutionOrSampleRate: '24kHz Mono WAV',
+      resolutionOrSampleRate: '24kHz Warm EQ WAV',
+      estimatedCostPerMinUsd: 0,
+      metrics: {
+        faceSimilarity: null,
+        voiceSimilarity: null,
+        lipSync: null,
+        naturalExpressions: null,
+        renderingQuality: null,
+      },
+      notes: 'Standard Gemini 3.8 Flash Lite TTS voice (Free Tier Eligible on standard GEMINI_API_KEY). Great crisp English & natural Hindi delivery.',
+      benchmarkedAt: null,
+    },
+    {
+      id: 'bm_gemini_flash_tts',
+      providerId: 'gemini_flash_tts',
+      providerName: 'Gemini 3.8 Flash TTS (Expressive + Breath Cues)',
+      category: 'voice',
+      tier: 'balanced',
+      referenceImageLabel: 'N/A (Audio Only)',
+      voiceSampleLabel: 'Creator Reference Voice',
+      scriptExcerpt: 'Conversational bilingual Hinglish/English hook.',
+      verified: false,
+      processingMs: null,
+      resolutionOrSampleRate: '24kHz Warm EQ WAV',
       estimatedCostPerMinUsd: 0.015,
       metrics: {
         faceSimilarity: null,
@@ -392,30 +490,7 @@ function defaultBenchmarks(): ProviderBenchmark[] {
         naturalExpressions: null,
         renderingQuality: null,
       },
-      notes: 'Standard studio voice (not personal voice clone). Run benchmark to audition real latency and output.',
-      benchmarkedAt: null,
-    },
-    {
-      id: 'bm_gemini_flash_tts',
-      providerId: 'gemini_flash_tts',
-      providerName: 'Gemini 3.8 Flash TTS (Expressive)',
-      category: 'voice',
-      tier: 'balanced',
-      referenceImageLabel: 'N/A (Audio Only)',
-      voiceSampleLabel: 'Creator Reference Voice',
-      scriptExcerpt: 'Conversational bilingual Hinglish/English hook.',
-      verified: false,
-      processingMs: null,
-      resolutionOrSampleRate: '24kHz Mono WAV',
-      estimatedCostPerMinUsd: 0.03,
-      metrics: {
-        faceSimilarity: null,
-        voiceSimilarity: null,
-        lipSync: null,
-        naturalExpressions: null,
-        renderingQuality: null,
-      },
-      notes: 'Higher prosody fidelity than Lite TTS. Run benchmark to preview side-by-side.',
+      notes: 'Supports expressive screenplay pacing and <breath> cues via Gemini 3.8 Flash TTS.',
       benchmarkedAt: null,
     },
     {
@@ -556,71 +631,123 @@ function createInitialLiveState(geminiOk: boolean, ffmpegOk: boolean): Workspace
   };
 }
 
+function demoCompleteFaceAssets(now: string) {
+  return [
+    {
+      id: 'demo_face_front',
+      category: 'front' as const,
+      label: 'Studio Front Portrait (Neutral)',
+      url: '/api/media/demo/twin_portrait_front.jpg',
+      mimeType: 'image/jpeg',
+      filename: 'twin_portrait_front.jpg',
+      sizeBytes: 342800,
+      uploadedAt: now,
+    },
+    {
+      id: 'demo_face_talking',
+      category: 'expression_talking' as const,
+      label: 'Three-Quarter Talking Expression',
+      url: '/api/media/demo/twin_portrait_talking.jpg',
+      mimeType: 'image/jpeg',
+      filename: 'twin_portrait_talking.jpg',
+      sizeBytes: 318400,
+      uploadedAt: now,
+    },
+    {
+      id: 'demo_face_left',
+      category: 'left_profile' as const,
+      label: 'Left Profile Studio Angle',
+      url: '/api/media/demo/studio_editorial_banner.jpg',
+      mimeType: 'image/jpeg',
+      filename: 'studio_editorial_banner.jpg',
+      sizeBytes: 412000,
+      uploadedAt: now,
+    },
+    {
+      id: 'demo_face_right',
+      category: 'right_profile' as const,
+      label: 'Right Profile & Hero Angle Reference',
+      url: '/api/media/demo/twin_portrait_talking.jpg',
+      mimeType: 'image/jpeg',
+      filename: 'twin_portrait_talking.jpg',
+      sizeBytes: 318400,
+      uploadedAt: now,
+    },
+    {
+      id: 'demo_face_smiling',
+      category: 'expression_smiling' as const,
+      label: 'Warm Comedy / Engaging Smile Expression',
+      url: '/api/media/demo/twin_portrait_front.jpg',
+      mimeType: 'image/jpeg',
+      filename: 'twin_portrait_front.jpg',
+      sizeBytes: 342800,
+      uploadedAt: now,
+    },
+    {
+      id: 'demo_face_lighting',
+      category: 'lighting_variation' as const,
+      label: 'Warm Editorial Studio Lighting Plate',
+      url: '/api/media/demo/studio_editorial_banner.jpg',
+      mimeType: 'image/jpeg',
+      filename: 'studio_editorial_banner.jpg',
+      sizeBytes: 412000,
+      uploadedAt: now,
+    },
+  ];
+}
+
+function demoCompleteVoiceSamples(now: string) {
+  return [
+    {
+      id: 'demo_voice_en',
+      label: 'Studio Intro — Warm Editorial',
+      language: 'English' as const,
+      emotion: 'Conversational' as const,
+      url: '',
+      mimeType: 'audio/wav',
+      filename: 'demo_en_editorial_sample.wav',
+      sizeBytes: 482000,
+      durationSec: 14,
+      transcript: 'Most creators waste six hours filming a forty-second reel when the real bottleneck is clarity of thought.',
+      verified: true,
+      uploadedAt: now,
+    },
+    {
+      id: 'demo_voice_hinglish',
+      label: 'Hinglish Conversational Cadence',
+      language: 'Hinglish' as const,
+      emotion: 'Warm' as const,
+      url: '',
+      mimeType: 'audio/wav',
+      filename: 'demo_hinglish_sample.wav',
+      sizeBytes: 394000,
+      durationSec: 11,
+      transcript: 'Dekho, AI tab kaam aata hai jab woh aapki apni awaaz aur soch ko amplify kare, replace nahi.',
+      verified: true,
+      uploadedAt: now,
+    },
+    {
+      id: 'demo_voice_hindi',
+      label: 'Natural Hindi Storytelling Sample',
+      language: 'Hindi' as const,
+      emotion: 'Authoritative' as const,
+      url: '',
+      mimeType: 'audio/wav',
+      filename: 'demo_hindi_editorial_sample.wav',
+      sizeBytes: 428000,
+      durationSec: 12,
+      transcript: 'सीधे पॉइंट पर आते हैं — सही स्क्रिप्ट और प्राकृतिक हिंदी आवाज़ ही दर्शक को अंत तक जोड़कर रखती है।',
+      verified: true,
+      uploadedAt: now,
+    },
+  ];
+}
+
 function createInitialDemoState(geminiOk: boolean, ffmpegOk: boolean): WorkspaceState {
   const now = new Date().toISOString();
   const twin: TwinProfile = {
-    faceAssets: [
-      {
-        id: 'demo_face_front',
-        category: 'front',
-        label: 'Studio Front Portrait (Neutral)',
-        url: '/api/media/demo/twin_portrait_front.jpg',
-        mimeType: 'image/jpeg',
-        filename: 'twin_portrait_front.jpg',
-        sizeBytes: 342800,
-        uploadedAt: now,
-      },
-      {
-        id: 'demo_face_talking',
-        category: 'expression_talking',
-        label: 'Three-Quarter Talking Expression',
-        url: '/api/media/demo/twin_portrait_talking.jpg',
-        mimeType: 'image/jpeg',
-        filename: 'twin_portrait_talking.jpg',
-        sizeBytes: 318400,
-        uploadedAt: now,
-      },
-      {
-        id: 'demo_face_left',
-        category: 'left_profile',
-        label: 'Studio Banner / Framing Reference',
-        url: '/api/media/demo/studio_editorial_banner.jpg',
-        mimeType: 'image/jpeg',
-        filename: 'studio_editorial_banner.jpg',
-        sizeBytes: 412000,
-        uploadedAt: now,
-      },
-    ],
-    voiceSamples: [
-      {
-        id: 'demo_voice_en',
-        label: 'Studio Intro — Warm Editorial',
-        language: 'English',
-        emotion: 'Conversational',
-        url: '',
-        mimeType: 'audio/wav',
-        filename: 'demo_en_editorial_sample.wav',
-        sizeBytes: 482000,
-        durationSec: 14,
-        transcript: 'Most creators waste six hours filming a forty-second reel when the real bottleneck is clarity of thought.',
-        verified: true,
-        uploadedAt: now,
-      },
-      {
-        id: 'demo_voice_hinglish',
-        label: 'Hinglish Conversational Cadence',
-        language: 'Hinglish',
-        emotion: 'Warm',
-        url: '',
-        mimeType: 'audio/wav',
-        filename: 'demo_hinglish_sample.wav',
-        sizeBytes: 394000,
-        durationSec: 11,
-        transcript: 'Dekho, AI tab kaam aata hai jab woh aapki apni awaaz aur soch ko amplify kare, replace nahi.',
-        verified: true,
-        uploadedAt: now,
-      },
-    ],
+    faceAssets: demoCompleteFaceAssets(now),
+    voiceSamples: demoCompleteVoiceSamples(now),
     personality: {
       creatorName: 'Aarav Mehta',
       handle: '@aarav.studio',
@@ -647,12 +774,12 @@ function createInitialDemoState(geminiOk: boolean, ffmpegOk: boolean): Workspace
       requireAiDisclosure: true,
     },
     readiness: {
-      overallScore: 84,
-      faceScore: 75,
-      voiceScore: 75,
+      overallScore: 100,
+      faceScore: 100,
+      voiceScore: 100,
       personalityScore: 100,
       consentVerified: true,
-      missingItems: ['Right profile portrait'],
+      missingItems: [],
       externalModelStatus: 'local_ready',
     },
   };
@@ -1197,6 +1324,22 @@ export async function readWorkspace(mode: WorkspaceMode): Promise<WorkspaceState
   if (typeof parsed.twin.personality.naturalPausesEnabled !== 'boolean') {
     parsed.twin.personality.naturalPausesEnabled = true;
   }
+  // Auto-upgrade legacy partial Demo showcase seed to full 100% readiness assets
+  if (
+    mode === 'demo' &&
+    parsed.twin.faceAssets.length <= 3 &&
+    parsed.twin.faceAssets.every((f) => f.id.startsWith('demo_face_'))
+  ) {
+    const now = new Date().toISOString();
+    parsed.twin.faceAssets = demoCompleteFaceAssets(now);
+    if (
+      parsed.twin.voiceSamples.length <= 2 &&
+      parsed.twin.voiceSamples.every((v) => v.id.startsWith('demo_voice_'))
+    ) {
+      parsed.twin.voiceSamples = demoCompleteVoiceSamples(now);
+    }
+  }
+
   parsed.twin.readiness = computeReadiness(parsed.twin);
   parsed.capabilities = {
     geminiConfigured: isGeminiConfigured(),
@@ -1212,14 +1355,27 @@ export async function readWorkspace(mode: WorkspaceMode): Promise<WorkspaceState
   }
   const defaults = defaultIntegrations(parsed.capabilities.geminiConfigured, parsed.capabilities.ffmpegAvailable);
   for (const def of defaults) {
-    if (!parsed.integrations.some((i) => i.id === def.id)) {
+    const existing = parsed.integrations.find((i) => i.id === def.id);
+    if (!existing) {
       parsed.integrations.unshift(def);
+    } else {
+      if (!existing.nodeKind && def.nodeKind) existing.nodeKind = def.nodeKind;
+      if (!existing.httpMethod && def.httpMethod) existing.httpMethod = def.httpMethod;
+      if (!existing.authType && def.authType) existing.authType = def.authType;
+      if (!existing.authHeaderName && def.authHeaderName) existing.authHeaderName = def.authHeaderName;
+      if (!existing.customHeadersJson && def.customHeadersJson) existing.customHeadersJson = def.customHeadersJson;
+      if (!existing.payloadTemplateJson && def.payloadTemplateJson) existing.payloadTemplateJson = def.payloadTemplateJson;
     }
   }
   const bmDefaults = defaultBenchmarks();
   for (const bm of bmDefaults) {
-    if (!parsed.benchmarks.some((b) => b.providerId === bm.providerId)) {
+    const existingBm = parsed.benchmarks.find((b) => b.providerId === bm.providerId);
+    if (!existingBm) {
       parsed.benchmarks.unshift(bm);
+    } else if (existingBm.providerId === 'gemini_lite_tts') {
+      existingBm.tier = 'local_free';
+      existingBm.estimatedCostPerMinUsd = 0;
+      existingBm.providerName = bm.providerName;
     }
   }
   return parsed;
