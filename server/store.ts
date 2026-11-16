@@ -1435,15 +1435,22 @@ export async function readWorkspace(mode: WorkspaceMode, sessionId?: string | nu
     }
   }
   const defaults = defaultIntegrations(parsed.capabilities.geminiConfigured, parsed.capabilities.ffmpegAvailable);
+  const autoConnectFreeIds = new Set([
+    'free_hindi_neural',
+    'free_canvas_animator',
+    'ffmpeg_local',
+    'gemini_intelligence',
+  ]);
   for (const def of defaults) {
     const existing = parsed.integrations.find((i) => i.id === def.id);
     if (!existing) {
       parsed.integrations.unshift(def);
     } else {
-      if (def.id === 'gemini_omni_veo') {
+      if (def.id === 'gemini_omni_veo' || autoConnectFreeIds.has(def.id)) {
         existing.configured = def.configured;
         existing.status = def.status;
         existing.notes = def.notes;
+        existing.endpointUrl = def.endpointUrl;
       }
       if (!existing.nodeKind && def.nodeKind) existing.nodeKind = def.nodeKind;
       if (!existing.httpMethod && def.httpMethod) existing.httpMethod = def.httpMethod;

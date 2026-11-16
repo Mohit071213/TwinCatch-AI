@@ -121,8 +121,8 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
           <div className="text-[12px] text-[#77766F]">
             Budget cap {formatCurrency(settings.monthlyBudgetCapUsd)} ·{' '}
             {workspace.capabilities.billingProtection?.paidVeoLocked !== false
-              ? 'Zero-Bill Shield: Veo Locked ($0 Dev Risk)'
-              : 'Paid Veo: Owner/Credits Active'}{' '}
+              ? 'Free Auto-Connected ($0) · BYO Token Ready'
+              : 'Free Auto-Connected · BYO Token Ready'}{' '}
             · Free Local DB
           </div>
         </div>

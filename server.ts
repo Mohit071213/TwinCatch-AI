@@ -2842,6 +2842,57 @@ async function startServer() {
     }
   });
 
+  // Auto-connect all built-in $0.00 free voice, animation, FFmpeg & free-tier Gemini engines
+  app.post('/api/integrations/auto-connect-free', async (req, res) => {
+    try {
+      const { state } = await readReqWorkspace(req);
+      const now = new Date().toISOString();
+
+      state.settings.defaultQualityTier = 'local_free';
+      if (state.twin.personality.preferredVoiceProvider === 'elevenlabs_webhook') {
+        state.twin.personality.preferredVoiceProvider = 'free_hindi_neural';
+      }
+
+      const freeIds = ['free_hindi_neural', 'free_canvas_animator', 'ffmpeg_local', 'gemini_intelligence'];
+      let connectedCount = 0;
+      for (const id of freeIds) {
+        const conn = state.integrations.find((i) => i.id === id);
+        if (!conn) continue;
+        const ok =
+          id === 'ffmpeg_local'
+            ? state.capabilities.ffmpegAvailable
+            : id === 'gemini_intelligence'
+              ? state.capabilities.geminiConfigured
+              : true;
+        conn.configured = ok;
+        conn.status = ok ? 'connected' : id === 'gemini_intelligence' ? 'unconfigured' : 'unreachable';
+        conn.lastCheckedAt = now;
+        conn.lastTestResult = {
+          ok,
+          message: ok
+            ? `Auto-connected free $0.00 engine (${conn.name}).`
+            : id === 'gemini_intelligence'
+              ? 'GEMINI_API_KEY secret not set yet; Free Hindi Voice & Canvas Animator remain connected.'
+              : 'FFmpeg binary not detected on host.',
+          testedAt: now,
+        };
+        if (ok) connectedCount++;
+      }
+
+      appendAuditLog(state, {
+        actor: state.twin.personality.creatorName || 'Creator',
+        category: 'security',
+        action: 'Auto-Connected Free Engines ($0.00)',
+        detail: `Verified ${connectedCount} built-in free engines and defaulted Video Studio to Local Free Cinema.`,
+      });
+
+      const saved = await writeReqWorkspace(req, state);
+      res.json(saved);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to auto-connect free engines.' });
+    }
+  });
+
   // Integrations update & reachability / live API test
   app.put('/api/integrations/:id', async (req, res) => {
     try {
@@ -2923,12 +2974,12 @@ async function startServer() {
         item.lastTestResult = {
           ok: flagOn ? usable : true,
           message: !flagOn
-            ? 'Zero-Bill Shield LOCKED ($0.00 developer bill guarantee). Paid Veo cannot run for preview testers.'
+            ? 'Server-Protected ($0.00 developer risk). Use Auto-Connected Free Cinema, connect your own Fal/Replicate/Runway/HeyGen token below, or Remix in AI Studio to use your own Gemini billing.'
             : ownerOk
               ? 'Paid Veo UNLOCKED for verified Developer Owner session.'
               : stripeOn
-                ? 'Paid Veo active via Stripe Tester Prepaid Credits ($0.00 developer liability).'
-                : 'ALLOW_PAID_GEMINI_VEO=true requires Owner Passcode or STRIPE_SECRET_KEY before public testing.',
+                ? 'Paid Veo active via Tester Credits ($0.00 developer liability).'
+                : 'ALLOW_PAID_GEMINI_VEO=true requires server authorization before public testing.',
           testedAt: now,
         };
       } else if (item.id === 'ffmpeg_local') {

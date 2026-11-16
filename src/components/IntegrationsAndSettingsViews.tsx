@@ -8,6 +8,7 @@ import {
   Play,
   RefreshCw,
   ShieldAlert,
+  Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
@@ -22,9 +23,7 @@ import {
   apiRequest,
   formatCurrency,
   formatDateShort,
-  getOwnerUnlockToken,
   getTesterSessionId,
-  setOwnerUnlockToken,
 } from '../lib/api';
 
 /* ============================================================================
@@ -68,6 +67,73 @@ const TEMPLATE_TOKENS = [
   '{{aspectRatio}}',
 ];
 
+const BYO_VIDEO_PRESETS: Array<{
+  label: string;
+  endpointUrl: string;
+  authType: ConnectorAuthType;
+  authHeaderName: string;
+  tokenPlaceholder: string;
+  customHeadersJson: string;
+  payloadTemplateJson: string;
+}> = [
+  {
+    label: 'Fal.ai',
+    endpointUrl: 'https://queue.fal.run/fal-ai/kling-video/v1.6/pro/image-to-video',
+    authType: 'header_key',
+    authHeaderName: 'Authorization',
+    tokenPlaceholder: 'Key YOUR_FAL_API_KEY',
+    customHeadersJson: '{\n  "Content-Type": "application/json"\n}',
+    payloadTemplateJson:
+      '{\n  "prompt": "{{title}} — {{emotion}} presenter. {{scriptText}}",\n  "image_url": "{{portraitUrl}}",\n  "aspect_ratio": "{{aspectRatio}}"\n}',
+  },
+  {
+    label: 'Replicate',
+    endpointUrl: 'https://api.replicate.com/v1/predictions',
+    authType: 'bearer',
+    authHeaderName: 'Authorization',
+    tokenPlaceholder: 'r8_YOUR_REPLICATE_TOKEN',
+    customHeadersJson: '{\n  "Content-Type": "application/json",\n  "Prefer": "wait"\n}',
+    payloadTemplateJson:
+      '{\n  "input": {\n    "prompt": "{{title}} — {{scriptText}}",\n    "image": "{{portraitUrl}}",\n    "aspect_ratio": "{{aspectRatio}}"\n  }\n}',
+  },
+  {
+    label: 'Runway',
+    endpointUrl: 'https://api.dev.runwayml.com/v1/image_to_video',
+    authType: 'bearer',
+    authHeaderName: 'Authorization',
+    tokenPlaceholder: 'key_YOUR_RUNWAY_API_SECRET',
+    customHeadersJson: '{\n  "Content-Type": "application/json",\n  "X-Runway-Version": "2024-11-06"\n}',
+    payloadTemplateJson:
+      '{\n  "model": "gen4_turbo",\n  "promptImage": "{{portraitUrl}}",\n  "promptText": "{{title}} — {{emotion}}",\n  "ratio": "720:1280",\n  "duration": 10\n}',
+  },
+  {
+    label: 'Custom GPU',
+    endpointUrl: '',
+    authType: 'bearer',
+    authHeaderName: 'Authorization',
+    tokenPlaceholder: 'Paste Bearer / API Key token...',
+    customHeadersJson: '{\n  "Content-Type": "application/json"\n}',
+    payloadTemplateJson:
+      '{\n  "prompt": "{{title}} — {{emotion}} studio presenter",\n  "script_text": "{{scriptText}}",\n  "image_url": "{{portraitUrl}}",\n  "audio_url": "{{audioUrl}}",\n  "aspect_ratio": "{{aspectRatio}}",\n  "duration_sec": "{{durationSec}}"\n}',
+  },
+];
+
+const FREE_AUTO_CONNECT_IDS = new Set([
+  'free_hindi_neural',
+  'free_canvas_animator',
+  'ffmpeg_local',
+  'gemini_intelligence',
+  'free_hf_space',
+  'kokoro_local',
+]);
+
+const BYO_PAID_IDS = new Set([
+  'custom_paid_video_webhook',
+  'liveportrait_heygen',
+  'elevenlabs_webhook',
+  'gemini_omni_veo',
+]);
+
 export const IntegrationsView: React.FC<{
   workspace: WorkspaceState;
   mode: WorkspaceMode;
@@ -79,6 +145,8 @@ export const IntegrationsView: React.FC<{
   const [showTokens, setShowTokens] = useState<Record<string, boolean>>({});
   const [savingId, setSavingId] = useState<string | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [autoConnecting, setAutoConnecting] = useState(false);
+  const [filterGroup, setFilterGroup] = useState<'all' | 'free' | 'byo' | 'social'>('all');
   const [notice, setNotice] = useState('');
 
   useEffect(() => {
@@ -90,6 +158,22 @@ export const IntegrationsView: React.FC<{
       ...prev,
       [id]: { ...(prev[id] || ({} as ConnectorDraft)), ...patch },
     }));
+  };
+
+  const handleAutoConnectFree = async () => {
+    setAutoConnecting(true);
+    setNotice('');
+    try {
+      const updated = await apiRequest<WorkspaceState>('/api/integrations/auto-connect-free', mode, {
+        method: 'POST',
+      });
+      onUpdateWorkspace(updated);
+      setNotice(
+        'All built-in free engines (Free Hindi Neural Voices, Live Motion Animator, Multi-Scene FFmpeg, and Gemini Free-Tier) are auto-connected at $0.00.'
+      );
+    } finally {
+      setAutoConnecting(false);
+    }
   };
 
   const handleSave = async (conn: IntegrationConnector) => {
@@ -147,17 +231,75 @@ export const IntegrationsView: React.FC<{
     }
   };
 
+  const connectedFreeCount = workspace.integrations.filter(
+    (i) => FREE_AUTO_CONNECT_IDS.has(i.id) && (i.status === 'connected' || i.status === 'reachable')
+  ).length;
+  const connectedByoCount = workspace.integrations.filter(
+    (i) => BYO_PAID_IDS.has(i.id) && i.id !== 'gemini_omni_veo' && i.configured && Boolean(i.apiToken)
+  ).length;
+
+  const filteredIntegrations = workspace.integrations.filter((conn) => {
+    if (filterGroup === 'free') return FREE_AUTO_CONNECT_IDS.has(conn.id);
+    if (filterGroup === 'byo') return BYO_PAID_IDS.has(conn.id);
+    if (filterGroup === 'social') return !FREE_AUTO_CONNECT_IDS.has(conn.id) && !BYO_PAID_IDS.has(conn.id);
+    return true;
+  });
+
   return (
     <div className="space-y-6">
-      <div className="border-b border-[#E4DDD0] pb-6">
-        <div className="text-[11px] font-mono uppercase tracking-[0.16em] text-[#B69A65] font-semibold">
-          Direct Social APIs · n8n HTTP Node · Pluggable Engines
+      <div className="border-b border-[#E4DDD0] pb-6 flex flex-col lg:flex-row lg:items-end justify-between gap-4">
+        <div>
+          <div className="text-[11px] font-mono uppercase tracking-[0.16em] text-[#B69A65] font-semibold">
+            Auto-Connected Free Engines · Use Your Own Paid Keys · Direct Social APIs
+          </div>
+          <h1 className="font-editorial text-[34px] text-[#242421] mt-1">Integrations</h1>
+          <p className="text-[14px] text-[#77766F] mt-1">
+            Built-in $0.00 engines auto-connect automatically. To use paid third-party AI engines (Fal, Replicate,
+            Runway, HeyGen, ElevenLabs) or Instagram/Facebook Direct, paste your own token below.
+          </p>
         </div>
-        <h1 className="font-editorial text-[34px] text-[#242421] mt-1">Integrations</h1>
-        <p className="text-[14px] text-[#77766F] mt-1">
-          Connect Instagram &amp; Facebook Graph API directly with tokens, configure custom n8n-style HTTP Request
-          Nodes (Method, Auth, Headers, JSON Payload), and verify external voice/avatar engines.
-        </p>
+
+        <button
+          type="button"
+          disabled={autoConnecting}
+          onClick={() => void handleAutoConnectFree()}
+          className="px-4 py-2.5 bg-[#242421] hover:bg-[#3A3934] text-[#F6F3EC] text-[12.5px] font-semibold rounded-sm inline-flex items-center gap-2 shrink-0 whitespace-nowrap"
+        >
+          <Sparkles className="w-4 h-4 text-[#B69A65]" />
+          <span>{autoConnecting ? 'Connecting Free Engines...' : 'Auto-Connect Free Engines ($0)'}</span>
+        </button>
+      </div>
+
+      {/* Concise Status + Category Filter Bar */}
+      <div className="bg-[#FFFFFF] border border-[#E4DDD0] rounded-sm p-3.5 flex flex-wrap items-center justify-between gap-3">
+        <div className="text-[12px] font-mono text-[#242421] flex flex-wrap items-center gap-3">
+          <span className="inline-flex items-center gap-1.5">
+            <CheckCircle2 className="w-3.5 h-3.5 text-[#777D68]" />
+            <span>{connectedFreeCount} Free Engines Auto-Connected ($0.00)</span>
+          </span>
+          <span className="text-[#E4DDD0]">|</span>
+          <span className="text-[#77766F]">{connectedByoCount} User-Owned Paid Tokens Saved</span>
+        </div>
+
+        <div className="inline-flex border border-[#E4DDD0] bg-[#FAF8F4] rounded-sm p-0.5 text-[12px]">
+          {[
+            { id: 'all' as const, label: 'All Nodes' },
+            { id: 'free' as const, label: 'Free Auto-Connected ($0)' },
+            { id: 'byo' as const, label: 'Use Your Own Paid Key' },
+            { id: 'social' as const, label: 'Social & n8n' },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setFilterGroup(tab.id)}
+              className={`px-3 py-1 rounded-sm transition-colors ${
+                filterGroup === tab.id ? 'bg-[#242421] text-[#F6F3EC] font-semibold' : 'text-[#77766F]'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {notice && (
@@ -167,7 +309,7 @@ export const IntegrationsView: React.FC<{
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {workspace.integrations.map((conn) => {
+        {filteredIntegrations.map((conn) => {
           const isInternal = conn.endpointUrl?.startsWith('server://') || conn.endpointUrl?.startsWith('local://');
           const d = drafts[conn.id] || draftFromConnector(conn);
           const isMetaGraph =
@@ -291,6 +433,33 @@ export const IntegrationsView: React.FC<{
                   </div>
                 ) : isHttpNode ? (
                   <div className="space-y-3 bg-[#FAF8F4] border border-[#E4DDD0] p-4 rounded-sm">
+                    {conn.id === 'custom_paid_video_webhook' && (
+                      <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-[#E4DDD0]">
+                        <span className="text-[11px] font-mono uppercase tracking-[0.08em] text-[#242421] font-semibold">
+                          1-Click BYO Provider Templates (Bills Your Own Token):
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {BYO_VIDEO_PRESETS.map((preset) => (
+                            <button
+                              key={preset.label}
+                              type="button"
+                              onClick={() =>
+                                updateDraft(conn.id, {
+                                  endpointUrl: preset.endpointUrl,
+                                  authType: preset.authType,
+                                  authHeaderName: preset.authHeaderName,
+                                  customHeadersJson: preset.customHeadersJson,
+                                  payloadTemplateJson: preset.payloadTemplateJson,
+                                })
+                              }
+                              className="px-2.5 py-1 bg-[#FFFFFF] border border-[#E4DDD0] hover:border-[#242421] text-[11px] font-mono font-semibold text-[#242421] rounded-sm"
+                            >
+                              {preset.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
                       <div className="md:col-span-2">
                         <label className="block text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[#77766F] mb-1">
@@ -449,6 +618,55 @@ export const IntegrationsView: React.FC<{
                   </div>
                 ) : !isInternal ? (
                   <div className="space-y-2.5">
+                    {(conn.id === 'elevenlabs_webhook' || conn.id === 'liveportrait_heygen') && (
+                      <div className="flex flex-wrap items-center gap-1.5 pb-1">
+                        <span className="text-[10.5px] font-mono uppercase text-[#77766F]">Quick Preset:</span>
+                        {conn.id === 'elevenlabs_webhook' ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateDraft(conn.id, {
+                                endpointUrl:
+                                  d.endpointUrl || 'https://api.elevenlabs.io/v1/text-to-speech/YOUR_VOICE_ID',
+                                authType: 'header_key',
+                                authHeaderName: 'xi-api-key',
+                              })
+                            }
+                            className="px-2 py-0.5 bg-[#FAF8F4] border border-[#E4DDD0] hover:border-[#242421] text-[11px] font-mono rounded-sm"
+                          >
+                            ElevenLabs Direct API
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateDraft(conn.id, {
+                                  endpointUrl: 'https://api.heygen.com/v2/video/generate',
+                                  authType: 'header_key',
+                                  authHeaderName: 'X-Api-Key',
+                                })
+                              }
+                              className="px-2 py-0.5 bg-[#FAF8F4] border border-[#E4DDD0] hover:border-[#242421] text-[11px] font-mono rounded-sm"
+                            >
+                              HeyGen v2 API
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateDraft(conn.id, {
+                                  authType: 'bearer',
+                                  authHeaderName: 'Authorization',
+                                })
+                              }
+                              className="px-2 py-0.5 bg-[#FAF8F4] border border-[#E4DDD0] hover:border-[#242421] text-[11px] font-mono rounded-sm"
+                            >
+                              LivePortrait Bearer
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
                     <div className="flex gap-2">
                       <input
                         type="url"
@@ -467,11 +685,21 @@ export const IntegrationsView: React.FC<{
                       </button>
                     </div>
                     <div className="flex gap-2">
+                      {(conn.id === 'elevenlabs_webhook' || conn.id === 'liveportrait_heygen') && (
+                        <input
+                          type="text"
+                          value={d.authHeaderName}
+                          onChange={(e) => updateDraft(conn.id, { authHeaderName: e.target.value })}
+                          placeholder="Header"
+                          className="w-28 px-2.5 py-1.5 border border-[#E4DDD0] bg-[#FAF8F4] text-[11.5px] font-mono rounded-sm"
+                          title="HTTP Auth Header Name"
+                        />
+                      )}
                       <input
                         type={tokenVisible ? 'text' : 'password'}
                         value={d.apiToken}
                         onChange={(e) => updateDraft(conn.id, { apiToken: e.target.value })}
-                        placeholder="Optional Bearer / API Key Token..."
+                        placeholder="Paste YOUR personal API key / token..."
                         className="flex-1 px-3 py-1.5 border border-[#E4DDD0] text-[12px] font-mono rounded-sm"
                       />
                       <button
@@ -484,7 +712,11 @@ export const IntegrationsView: React.FC<{
                     </div>
                   </div>
                 ) : (
-                  <div className="text-[12px] font-mono text-[#77766F]">Server Runtime: {conn.endpointUrl}</div>
+                  <div className="text-[12px] font-mono text-[#77766F]">
+                    {conn.id === 'gemini_omni_veo'
+                      ? 'Developer Veo Server-Locked ($0.00 dev risk) — Use Auto-Connected Free Engines or Your Own Key above'
+                      : `Auto-Connected Runtime: ${conn.endpointUrl}`}
+                  </div>
                 )}
 
                 {conn.lastTestResult && (
@@ -597,26 +829,33 @@ export const SettingsView: React.FC<{
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#E4DDD0] pb-3">
             <div>
               <h2 className="font-editorial text-[22px] text-[#242421]">
-                Developer Zero-Bill Shield &amp; Pre-Publish Audit
+                Free Auto-Connect &amp; Use-Your-Own-Key Architecture
               </h2>
               <p className="text-[13px] text-[#77766F]">
-                Protects the developer from unexpected cloud/AI bills before sharing or publishing preview links.
+                Free voice/video engines auto-connect automatically at $0.00. Testers pay their own external API
+                providers via Integrations, while server-paid Veo stays locked against accidental developer bills.
               </p>
             </div>
-            <span
-              className={`px-3 py-1 text-[11px] font-mono font-semibold uppercase rounded-sm ${
-                workspace.capabilities.billingProtection.paidVeoLocked
-                  ? 'bg-[#E9ECE4] text-[#242421] border border-[#777D68]/40'
-                  : 'bg-[#EFE8D8] text-[#242421] border border-[#B69A65]/60'
-              }`}
-            >
+            <span className="px-3 py-1 text-[11px] font-mono font-semibold uppercase rounded-sm bg-[#E9ECE4] text-[#242421] border border-[#777D68]/40">
               {workspace.capabilities.billingProtection.paidVeoLocked
                 ? 'PAID VEO SERVER-LOCKED ($0 DEV RISK)'
-                : 'ALLOW_PAID_GEMINI_VEO UNLOCKED'}
+                : 'LOCAL HOST VEO ENABLED'}
             </span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-[12px] font-mono">
+            <div className="p-3 bg-[#FAF8F4] border border-[#E4DDD0] rounded-sm">
+              <div className="text-[#77766F] uppercase text-[10px]">Free Built-In Engines</div>
+              <div className="text-[#242421] font-semibold mt-1">
+                Auto-Connected ($0.00 Unlimited)
+              </div>
+            </div>
+            <div className="p-3 bg-[#FAF8F4] border border-[#E4DDD0] rounded-sm">
+              <div className="text-[#77766F] uppercase text-[10px]">Paid AI Providers</div>
+              <div className="text-[#242421] font-semibold mt-1">
+                User-Owned Token (Integrations)
+              </div>
+            </div>
             <div className="p-3 bg-[#FAF8F4] border border-[#E4DDD0] rounded-sm">
               <div className="text-[#77766F] uppercase text-[10px]">Free Database Engine</div>
               <div className="text-[#242421] font-semibold mt-1">
@@ -626,23 +865,9 @@ export const SettingsView: React.FC<{
             <div className="p-3 bg-[#FAF8F4] border border-[#E4DDD0] rounded-sm">
               <div className="text-[#77766F] uppercase text-[10px]">Tester Session Isolation</div>
               <div className="text-[#242421] font-semibold mt-1">
-                Active ({workspace.capabilities.billingProtection.sessionIdPreview}) · Env Tokens Isolated
-              </div>
-            </div>
-            <div className="p-3 bg-[#FAF8F4] border border-[#E4DDD0] rounded-sm">
-              <div className="text-[#77766F] uppercase text-[10px]">Free-Tier Gemini Quota</div>
-              <div className="text-[#242421] font-semibold mt-1">
+                {workspace.capabilities.billingProtection.sessionIdPreview} · Free Quota{' '}
                 {workspace.capabilities.billingProtection.geminiHourlyRemaining}/
-                {workspace.capabilities.billingProtection.geminiHourlyLimit} hr ·{' '}
-                {workspace.capabilities.billingProtection.geminiDailyRemaining}/
-                {workspace.capabilities.billingProtection.geminiDailyLimit} day
-              </div>
-            </div>
-            <div className="p-3 bg-[#FAF8F4] border border-[#E4DDD0] rounded-sm">
-              <div className="text-[#77766F] uppercase text-[10px]">Prepaid Credit Wallet</div>
-              <div className="text-[#242421] font-semibold mt-1">
-                {formatCurrency(workspace.capabilities.billingProtection.testerCreditBalanceUsd)} ·{' '}
-                {workspace.capabilities.billingProtection.stripeEnabled ? 'Stripe On' : 'BYO Token Mode'}
+                {workspace.capabilities.billingProtection.geminiHourlyLimit} hr
               </div>
             </div>
           </div>
@@ -829,12 +1054,9 @@ export const ProfileLockModal: React.FC<{
 }> = ({ workspace, mode, onUpdateWorkspace, onClose }) => {
   const [email, setEmail] = useState(workspace.settings.creatorEmail || 'Samymehra071213@gmail.com');
   const [lockEnabled, setLockEnabled] = useState(workspace.settings.sessionLockEnabled);
-  const [ownerToken, setOwnerToken] = useState(() => getOwnerUnlockToken());
-  const billingProt = workspace.capabilities.billingProtection;
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    setOwnerUnlockToken(ownerToken);
     const updated = await apiRequest<WorkspaceState>('/api/settings', mode, {
       method: 'PUT',
       body: JSON.stringify({
@@ -861,13 +1083,12 @@ export const ProfileLockModal: React.FC<{
 
         <form onSubmit={handleSave} className="p-6 space-y-4">
           <div className="p-3 bg-[#F6F3EC] border border-[#E4DDD0] rounded-sm text-[12px] text-[#77766F] space-y-1">
-            <div>Isolated Tester Session: <span className="font-mono text-[#242421]">{getTesterSessionId()}</span></div>
-            {billingProt && (
-              <div>
-                Prepaid Credits: <span className="font-mono text-[#242421]">{formatCurrency(billingProt.testerCreditBalanceUsd)}</span> · Zero-Bill Veo Lock:{' '}
-                <span className="font-mono text-[#242421]">{billingProt.paidVeoLocked ? 'LOCKED' : 'ACTIVE'}</span>
-              </div>
-            )}
+            <div>
+              Isolated Browser Session: <span className="font-mono text-[#242421]">{getTesterSessionId()}</span>
+            </div>
+            <div>
+              Your saved API keys &amp; social tokens stay isolated in your own browser session on our free local DB.
+            </div>
           </div>
           <div>
             <label className="block text-[11px] font-semibold uppercase text-[#77766F] mb-1">
@@ -879,21 +1100,6 @@ export const ProfileLockModal: React.FC<{
               onChange={(e) => setEmail(e.target.value)}
               className="w-full px-3 py-2 border border-[#E4DDD0] text-[13.5px] rounded-sm"
             />
-          </div>
-          <div>
-            <label className="block text-[11px] font-semibold uppercase text-[#77766F] mb-1">
-              Developer Owner Unlock Passcode (Optional)
-            </label>
-            <input
-              type="password"
-              value={ownerToken}
-              onChange={(e) => setOwnerToken(e.target.value)}
-              placeholder="Matches OWNER_UNLOCK_TOKEN secret if enabled..."
-              className="w-full px-3 py-2 border border-[#E4DDD0] font-mono text-[12.5px] rounded-sm"
-            />
-            <p className="text-[11px] text-[#77766F] mt-1">
-              Optional developer passcode stored only in browser sessionStorage. Leave blank for public tester mode.
-            </p>
           </div>
           <label className="flex items-start gap-2.5 text-[13px] cursor-pointer">
             <input
