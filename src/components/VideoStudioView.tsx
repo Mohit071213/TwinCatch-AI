@@ -22,6 +22,7 @@ import type {
   BackgroundStyleType,
   ColorGradePreset,
   CostEstimate,
+  NavSection,
   PresenterVisualMode,
   ProductionStyle,
   QualityTier,
@@ -49,6 +50,7 @@ interface VideoStudioViewProps {
   mode: WorkspaceMode;
   preselectedScriptId?: string;
   onUpdateWorkspace: (w: WorkspaceState) => void;
+  onNavigate?: (s: NavSection) => void;
 }
 
 const FORMATS: VideoFormatType[] = [
@@ -66,9 +68,12 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
   mode,
   preselectedScriptId,
   onUpdateWorkspace,
+  onNavigate,
 }) => {
   const [studioTab, setStudioTab] = useState<'produce' | 'benchmarks'>('produce');
-  const [qualityTier, setQualityTier] = useState<QualityTier>(workspace.settings.defaultQualityTier || 'balanced');
+  const [qualityTier, setQualityTier] = useState<QualityTier>(workspace.settings.defaultQualityTier || 'local_free');
+  const [showRemixGuideModal, setShowRemixGuideModal] = useState(false);
+  const [stripeBusy, setStripeBusy] = useState(false);
 
   const initialScript =
     workspace.scripts?.find((s) => s.id === preselectedScriptId) ||
@@ -681,6 +686,24 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
     }
   };
 
+  const handleStartStripeTopUp = async (amountUsd = 5) => {
+    setError('');
+    setStripeBusy(true);
+    try {
+      const res = await apiRequest<{ checkoutUrl: string }>('/api/billing/create-checkout-session', mode, {
+        method: 'POST',
+        body: JSON.stringify({ amountUsd }),
+      });
+      if (res.checkoutUrl) {
+        window.location.href = res.checkoutUrl;
+      }
+    } catch (err: any) {
+      setError(err.message || 'Unable to start Stripe Checkout.');
+    } finally {
+      setStripeBusy(false);
+    }
+  };
+
   const handleRateBenchmark = async (id: string, field: string, val: number) => {
     try {
       const updated = await apiRequest<WorkspaceState>(`/api/benchmarks/${id}/rate`, mode, {
@@ -692,6 +715,8 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
       setError(err.message);
     }
   };
+
+  const billingProt = workspace.capabilities.billingProtection;
 
   return (
     <div className="space-y-6">
@@ -787,6 +812,109 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
               );
             })}
           </section>
+
+          {/* Billing & Free Quota Protection Strip */}
+          {billingProt && (
+            <div className="px-4 py-2.5 bg-[#FFFFFF] border border-[#E4DDD0] rounded-sm flex flex-wrap items-center justify-between gap-2 text-[11.5px] font-mono text-[#77766F]">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="inline-flex items-center gap-1.5 text-[#242421] font-semibold">
+                  <ShieldCheck className="w-3.5 h-3.5 text-[#777D68]" />
+                  <span>
+                    Zero-Bill Shield:{' '}
+                    {billingProt.ownerUnlockActive
+                      ? 'Owner Session Active'
+                      : billingProt.paidVeoLocked
+                        ? 'Paid Veo Locked ($0 Dev Bill)'
+                        : 'Tester Prepaid Credits Active'}
+                  </span>
+                </span>
+                <span>·</span>
+                <span>
+                  Free-Tier Gemini Quota: {billingProt.geminiHourlyRemaining}/{billingProt.geminiHourlyLimit} hr
+                </span>
+                <span>·</span>
+                <span>Free Hindi &amp; Cinema FFmpeg: Unlimited ($0.00)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {!billingProt.paidVeoLocked && billingProt.stripeEnabled && (
+                  <button
+                    type="button"
+                    disabled={stripeBusy}
+                    onClick={() => void handleStartStripeTopUp(5)}
+                    className="px-2.5 py-1 bg-[#F6F3EC] border border-[#B69A65]/60 text-[#242421] rounded-sm hover:bg-[#EFE8D8]"
+                  >
+                    {stripeBusy
+                      ? 'Opening Checkout...'
+                      : `Credits: ${formatCurrency(billingProt.testerCreditBalanceUsd)} (+ $5)`}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Developer Zero-Bill Shield Card when Paid Veo is Locked or BYO Paid Provider is Active */}
+          {estimate?.paidVeoBlockedByServer && (
+            <div className="p-4 bg-[#EFE8D8] border border-[#B69A65] rounded-sm space-y-3">
+              <div className="flex items-start gap-2.5">
+                <ShieldCheck className="w-5 h-5 text-[#242421] shrink-0 mt-0.5" />
+                <div className="space-y-1 text-[12.5px] text-[#242421]">
+                  <div className="font-semibold">
+                    Paid Gemini Omni / Veo is Server-Locked by Developer Zero-Bill Shield ($0.00 Developer Risk)
+                  </div>
+                  <p className="text-[#5A5953] leading-relaxed">
+                    {estimate.blockReason ||
+                      'Public testers cannot trigger developer-billed Veo video renders. You have three zero-risk ways to produce video right now:'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 pl-7">
+                <button
+                  type="button"
+                  onClick={() => applyQualityTier('local_free')}
+                  className="px-3 py-1.5 bg-[#242421] text-[#F6F3EC] text-[12px] font-semibold rounded-sm"
+                >
+                  Use $0.00 Cinema Engine
+                </button>
+                {onNavigate && (
+                  <button
+                    type="button"
+                    onClick={() => onNavigate('integrations')}
+                    className="px-3 py-1.5 bg-[#FFFFFF] border border-[#242421] text-[#242421] text-[12px] font-semibold rounded-sm hover:bg-[#FAF8F4]"
+                  >
+                    Connect Your Own Paid Video API
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowRemixGuideModal(true)}
+                  className="px-3 py-1.5 bg-[#FFFFFF] border border-[#E4DDD0] text-[#242421] text-[12px] font-semibold rounded-sm hover:border-[#242421]"
+                >
+                  Run Veo on Your Own Account (Remix)
+                </button>
+                {billingProt?.stripeEnabled && !billingProt?.paidVeoLocked && (
+                  <button
+                    type="button"
+                    disabled={stripeBusy}
+                    onClick={() => void handleStartStripeTopUp(5)}
+                    className="px-3 py-1.5 bg-[#B69A65] text-[#242421] text-[12px] font-semibold rounded-sm"
+                  >
+                    {stripeBusy ? 'Starting Stripe...' : 'Top Up $5 Prepaid Credits'}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {!estimate?.paidVeoBlockedByServer && estimate?.billingResponsibility === 'tester_byo_provider' && (
+            <div className="p-3.5 bg-[#E9ECE4] border border-[#777D68]/50 rounded-sm flex items-start gap-2.5 text-[12.5px] text-[#242421]">
+              <CheckCircle2 className="w-4 h-4 text-[#777D68] shrink-0 mt-0.5" />
+              <div>
+                <span className="font-semibold">Bring-Your-Own Paid API Active: </span>
+                This render uses <span className="font-semibold">YOUR</span> personal token configured in
+                Integrations so the provider bills your own account directly ($0.00 developer cost).
+              </div>
+            </div>
+          )}
 
           {/* Automatic Quality Fallback Recommendation Banner */}
           {estimate?.recommendedUpgradeReason && (
@@ -1038,9 +1166,16 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                     <option value="free_canvas_animator">Free Live Motion Animator ($0.00)</option>
                     <option value="ffmpeg_local">Free Multi-Scene FFmpeg ($0.00)</option>
                     <option value="free_hf_space">Free HF ZeroGPU Space ($0.00)</option>
-                    <option value="gemini_omni_veo">Gemini Omni / Veo (Paid)</option>
-                    <option value="liveportrait_webhook">LivePortrait Worker</option>
-                    <option value="heygen_webhook">HeyGen Webhook</option>
+                    <option value="custom_paid_video_webhook">
+                      Custom Paid Video API · Fal / Replicate / Runway (Your Token)
+                    </option>
+                    <option value="liveportrait_webhook">LivePortrait Worker (Your Token)</option>
+                    <option value="heygen_webhook">HeyGen Webhook (Your Token)</option>
+                    <option value="gemini_omni_veo">
+                      {billingProt?.paidVeoLocked && !billingProt?.ownerUnlockActive
+                        ? 'Gemini Omni / Veo (Server-Locked · Zero Dev Bill)'
+                        : 'Gemini Omni / Veo (Paid)'}
+                    </option>
                   </select>
                 </div>
                 <div>
@@ -1614,28 +1749,38 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {workspace.benchmarks.map((bm) => (
-              <div key={bm.id} className="bg-[#FFFFFF] border border-[#E4DDD0] rounded-sm p-5 space-y-4">
-                <div className="flex items-start justify-between gap-3 border-b border-[#E4DDD0] pb-3">
-                  <div>
-                    <div className="text-[11px] font-mono uppercase text-[#B69A65]">
-                      {bm.category} · {bm.tier.replace('_', ' ')} · Est ${bm.estimatedCostPerMinUsd.toFixed(3)}/min
+            {workspace.benchmarks.map((bm) => {
+              const isLockedVeo =
+                bm.providerId === 'gemini_omni_veo' &&
+                Boolean(billingProt?.paidVeoLocked && !billingProt?.ownerUnlockActive);
+              return (
+                <div key={bm.id} className="bg-[#FFFFFF] border border-[#E4DDD0] rounded-sm p-5 space-y-4">
+                  <div className="flex items-start justify-between gap-3 border-b border-[#E4DDD0] pb-3">
+                    <div>
+                      <div className="text-[11px] font-mono uppercase text-[#B69A65]">
+                        {bm.category} · {bm.tier.replace('_', ' ')} · Est ${bm.estimatedCostPerMinUsd.toFixed(3)}/min
+                      </div>
+                      <h3 className="font-editorial text-[20px] text-[#242421] mt-0.5">{bm.providerName}</h3>
                     </div>
-                    <h3 className="font-editorial text-[20px] text-[#242421] mt-0.5">{bm.providerName}</h3>
+                    <button
+                      type="button"
+                      disabled={benchmarkBusyId === bm.providerId || isLockedVeo}
+                      onClick={() => handleRunBenchmark(bm.providerId, bm.tier)}
+                      className={`px-3.5 py-1.5 text-[12px] font-semibold rounded-sm shrink-0 ${
+                        isLockedVeo
+                          ? 'bg-[#EFE8D8] text-[#77766F] border border-[#E4DDD0] cursor-not-allowed'
+                          : 'bg-[#242421] text-[#F6F3EC] hover:bg-[#3A3934]'
+                      }`}
+                    >
+                      {benchmarkBusyId === bm.providerId
+                        ? 'Benchmarking...'
+                        : isLockedVeo
+                          ? 'Locked (Zero-Bill Shield)'
+                          : bm.tier === 'premium'
+                            ? 'Approve & Run Test'
+                            : 'Run Live Test'}
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    disabled={benchmarkBusyId === bm.providerId}
-                    onClick={() => handleRunBenchmark(bm.providerId, bm.tier)}
-                    className="px-3.5 py-1.5 bg-[#242421] text-[#F6F3EC] text-[12px] font-semibold rounded-sm shrink-0 hover:bg-[#3A3934]"
-                  >
-                    {benchmarkBusyId === bm.providerId
-                      ? 'Benchmarking...'
-                      : bm.tier === 'premium'
-                        ? 'Approve & Run Test'
-                        : 'Run Live Test'}
-                  </button>
-                </div>
 
                 <div className="grid grid-cols-2 gap-2 text-[12px] font-mono tabular-nums text-[#77766F]">
                   <div>
@@ -1686,7 +1831,8 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       )}
@@ -1699,9 +1845,15 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
               <ShieldCheck className="w-6 h-6 text-[#B69A65] shrink-0 mt-0.5" />
               <div>
                 <div className="text-[11px] font-mono uppercase tracking-[0.14em] text-[#77766F]">
-                  Explicit Cost Authorization Gate
+                  {estimate.paidVeoBlockedByServer
+                    ? 'Developer Zero-Bill Shield Active'
+                    : 'Explicit Cost Authorization Gate'}
                 </div>
-                <h2 className="font-editorial text-[24px] text-[#242421]">Confirm Studio Render Spend</h2>
+                <h2 className="font-editorial text-[24px] text-[#242421]">
+                  {estimate.paidVeoBlockedByServer
+                    ? 'Paid Gemini Veo Locked on Preview'
+                    : 'Confirm Studio Render Spend'}
+                </h2>
               </div>
             </div>
 
@@ -1722,6 +1874,18 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
                   {visualProvider} ({formatCurrency(estimate.estimatedVisualUsd)})
                 </span>
               </div>
+              <div className="flex justify-between">
+                <span className="text-[#77766F]">Billing Account</span>
+                <span className="font-semibold text-[#242421]">
+                  {estimate.billingResponsibility === 'tester_byo_provider'
+                    ? 'Your Provider Token'
+                    : estimate.billingResponsibility === 'tester_prepaid_credits'
+                      ? 'Your Prepaid Credits'
+                      : estimate.billingResponsibility === 'owner_authorized'
+                        ? 'Developer Owner'
+                        : 'Blocked ($0 Dev Bill)'}
+                </span>
+              </div>
               <div className="border-t border-[#E4DDD0] pt-2 flex justify-between text-[14.5px] font-semibold text-[#242421]">
                 <span>Estimated Charge</span>
                 <span>{formatCurrency(estimate.estimatedTotalUsd)}</span>
@@ -1729,11 +1893,14 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
             </div>
 
             <p className="text-[12.5px] text-[#77766F] leading-relaxed">
-              TwinForge AI never triggers paid generation without your explicit per-job confirmation. Local FFmpeg
-              post-mastering and disclosure watermarking remain preserved.
+              {estimate.paidVeoBlockedByServer
+                ? estimate.blockReason
+                : estimate.billingResponsibility === 'tester_byo_provider'
+                  ? 'This job authenticates with YOUR own API key saved in Integrations so the provider bills your account directly ($0.00 developer liability).'
+                  : 'TwinForge AI never triggers paid generation without your explicit per-job confirmation. Local FFmpeg post-mastering and disclosure watermarking remain preserved.'}
             </p>
 
-            <div className="flex justify-end gap-3">
+            <div className="flex flex-wrap justify-end gap-2.5">
               <button
                 type="button"
                 onClick={() => setShowApprovalModal(false)}
@@ -1741,18 +1908,110 @@ export const VideoStudioView: React.FC<VideoStudioViewProps> = ({
               >
                 Cancel
               </button>
+              {estimate.paidVeoBlockedByServer ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowApprovalModal(false);
+                      applyQualityTier('local_free');
+                    }}
+                    className="px-4 py-2 bg-[#242421] text-[#F6F3EC] text-[13px] font-semibold rounded-sm"
+                  >
+                    Switch to $0.00 Cinema Mode
+                  </button>
+                  {onNavigate && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowApprovalModal(false);
+                        onNavigate('integrations');
+                      }}
+                      className="px-4 py-2 border border-[#242421] text-[#242421] text-[13px] font-semibold rounded-sm"
+                    >
+                      Configure Own Token
+                    </button>
+                  )}
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => executeRender(true)}
+                  className="px-5 py-2 bg-[#242421] text-[#F6F3EC] text-[13px] font-semibold rounded-sm inline-flex items-center gap-1.5"
+                >
+                  <CheckCircle2 className="w-4 h-4 text-[#B69A65]" />
+                  <span>Authorize &amp; Render</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Remix Self-Host Guide Modal for Tester-Billed Gemini Veo */}
+      {showRemixGuideModal && (
+        <div className="fixed inset-0 z-50 bg-[#242421]/60 flex items-center justify-center p-4">
+          <div className="bg-[#FFFFFF] border border-[#E4DDD0] rounded-sm w-full max-w-lg p-6 space-y-4">
+            <div className="flex items-start justify-between gap-3 border-b border-[#E4DDD0] pb-3">
+              <div>
+                <div className="text-[11px] font-mono uppercase tracking-[0.14em] text-[#B69A65]">
+                  Zero-Developer-Bill Self-Host Path
+                </div>
+                <h2 className="font-editorial text-[24px] text-[#242421]">Run Paid Veo on Your Own Billing</h2>
+              </div>
               <button
                 type="button"
-                onClick={() => executeRender(true)}
-                className="px-5 py-2 bg-[#242421] text-[#F6F3EC] text-[13px] font-semibold rounded-sm inline-flex items-center gap-1.5"
+                onClick={() => setShowRemixGuideModal(false)}
+                className="text-[12px] font-mono text-[#77766F] hover:text-[#242421]"
               >
-                <CheckCircle2 className="w-4 h-4 text-[#B69A65]" />
-                <span>Authorize &amp; Render</span>
+                Close
+              </button>
+            </div>
+            <ol className="text-[13px] text-[#242421] space-y-2.5 list-decimal pl-5 leading-relaxed">
+              <li>
+                Click <span className="font-semibold">Remix</span> in Google AI Studio to clone TwinForge Studio into
+                your own private project workspace.
+              </li>
+              <li>
+                Open AI Studio <span className="font-semibold">Settings &gt; Secrets</span> in your remixed copy and
+                configure your own billed Google Cloud / Gemini billing project (`GEMINI_API_KEY`).
+              </li>
+              <li>
+                Add the secret <code className="px-1.5 py-0.5 bg-[#F6F3EC] rounded text-[12px]">ALLOW_PAID_GEMINI_VEO=true</code>{' '}
+                in <span className="font-semibold">Settings &gt; Secrets</span> (optionally paired with your personal{' '}
+                <code className="px-1.5 py-0.5 bg-[#F6F3EC] rounded text-[12px]">OWNER_UNLOCK_TOKEN</code>).
+              </li>
+              <li>
+                Alternatively, without remixing, open <span className="font-semibold">Integrations</span> right here and
+                paste your own <span className="font-semibold">HeyGen / LivePortrait / Fal / Replicate / ElevenLabs</span>{' '}
+                token—those APIs bill your account directly.
+              </li>
+            </ol>
+            <div className="flex justify-end gap-2 pt-2">
+              {onNavigate && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowRemixGuideModal(false);
+                    onNavigate('integrations');
+                  }}
+                  className="px-4 py-2 border border-[#242421] text-[#242421] text-[12.5px] font-semibold rounded-sm"
+                >
+                  Open Integrations
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowRemixGuideModal(false)}
+                className="px-4 py-2 bg-[#242421] text-[#F6F3EC] text-[12.5px] font-semibold rounded-sm"
+              >
+                Got It
               </button>
             </div>
           </div>
         </div>
       )}
+
       {/* Browsable Prompt-Library Modal for Dynamic Motion-Graphic Preset Overrides */}
       <PromptLibraryModal
         open={promptLibraryOpen}

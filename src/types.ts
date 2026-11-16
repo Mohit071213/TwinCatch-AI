@@ -255,7 +255,8 @@ export type VisualProviderId =
   | 'free_hf_space'
   | 'gemini_omni_veo'
   | 'liveportrait_webhook'
-  | 'heygen_webhook';
+  | 'heygen_webhook'
+  | 'custom_paid_video_webhook';
 
 export interface CostEstimate {
   qualityTier: QualityTier;
@@ -269,6 +270,14 @@ export interface CostEstimate {
   qualityAdvisory: string;
   recommendedUpgradeTier?: QualityTier;
   recommendedUpgradeReason?: string;
+  paidVeoBlockedByServer?: boolean;
+  billingResponsibility?:
+    | 'free_zero_cost'
+    | 'tester_byo_provider'
+    | 'tester_prepaid_credits'
+    | 'owner_authorized'
+    | 'blocked_developer_shield';
+  blockReason?: string;
 }
 
 export type PresenterVisualMode =
@@ -433,6 +442,7 @@ export interface VideoRenderJob {
   estimatedCostUsd: number;
   actualCostUsd: number;
   approvedPaidCharge: boolean;
+  costBilledTo?: 'free' | 'tester_byo_token' | 'tester_credits' | 'owner';
   durationSec: number;
   processingMs: number;
   status: 'queued' | 'synthesizing_voice' | 'assembling_video' | 'completed' | 'failed';
@@ -612,5 +622,21 @@ export interface WorkspaceState {
   capabilities: {
     geminiConfigured: boolean;
     ffmpegAvailable: boolean;
+    billingProtection?: BillingProtectionStatus;
   };
+}
+
+export interface BillingProtectionStatus {
+  paidVeoLocked: boolean;
+  stripeEnabled: boolean;
+  sessionIsolated: boolean;
+  sessionIdPreview: string;
+  testerCreditBalanceUsd: number;
+  geminiHourlyRemaining: number;
+  geminiHourlyLimit: number;
+  geminiDailyRemaining: number;
+  geminiDailyLimit: number;
+  developerEnvTokensCleared: boolean;
+  ownerUnlockActive: boolean;
+  freeDatabaseEngine: string;
 }

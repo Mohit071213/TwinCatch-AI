@@ -841,7 +841,7 @@
     "monthlyBudgetCapUsd": 25,
     "currentMonthSpendUsd": 0.0334,
     "requireExplicitPaidApproval": true,
-    "defaultQualityTier": "balanced",
+    "defaultQualityTier": "local_free",
     "aiDisclosureDefault": true,
     "watermarkText": "AI DIGITAL TWIN · AUTHORIZED LIKENESS",
     "sessionLockEnabled": false,

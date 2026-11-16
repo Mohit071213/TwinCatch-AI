@@ -1,5 +1,49 @@
 import type { WorkspaceMode, WorkspaceState } from '../types';
 
+const SESSION_STORAGE_KEY = 'twinforge_tester_session_id';
+const OWNER_TOKEN_STORAGE_KEY = 'twinforge_owner_unlock_token';
+
+export function getTesterSessionId(): string {
+  if (typeof window === 'undefined') return 'server_local';
+  try {
+    let existing = window.localStorage.getItem(SESSION_STORAGE_KEY);
+    if (!existing || !/^[a-zA-Z0-9_-]{8,64}$/.test(existing)) {
+      const rand =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID().replace(/-/g, '').slice(0, 16)
+          : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+      existing = `sess_${rand}`;
+      window.localStorage.setItem(SESSION_STORAGE_KEY, existing);
+    }
+    return existing;
+  } catch {
+    return 'sess_browser_tmp';
+  }
+}
+
+export function getOwnerUnlockToken(): string {
+  if (typeof window === 'undefined') return '';
+  try {
+    return window.sessionStorage.getItem(OWNER_TOKEN_STORAGE_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function setOwnerUnlockToken(token: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const clean = token.trim();
+    if (clean) {
+      window.sessionStorage.setItem(OWNER_TOKEN_STORAGE_KEY, clean);
+    } else {
+      window.sessionStorage.removeItem(OWNER_TOKEN_STORAGE_KEY);
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
 export async function apiRequest<T = WorkspaceState>(
   url: string,
   mode: WorkspaceMode,
@@ -7,6 +51,11 @@ export async function apiRequest<T = WorkspaceState>(
 ): Promise<T> {
   const headers = new Headers(options.headers || {});
   headers.set('x-workspace-mode', mode);
+  headers.set('x-workspace-session', getTesterSessionId());
+  const ownerToken = getOwnerUnlockToken();
+  if (ownerToken) {
+    headers.set('x-owner-unlock-token', ownerToken);
+  }
   if (!(options.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }

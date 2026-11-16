@@ -20,6 +20,7 @@ import {
 } from './media.ts';
 
 export const DATA_ROOT = path.resolve(process.cwd(), 'data');
+export const SESSIONS_DIR = path.join(DATA_ROOT, 'sessions');
 export const UPLOADS_DIR = path.join(DATA_ROOT, 'uploads');
 export const AUDIO_DIR = path.join(DATA_ROOT, 'audio');
 export const VIDEOS_DIR = path.join(DATA_ROOT, 'videos');
@@ -28,6 +29,13 @@ export const DEMO_ASSETS_DIR = path.join(DATA_ROOT, 'demo-assets');
 
 const LIVE_DB_PATH = path.join(DATA_ROOT, 'live-workspace.json');
 const DEMO_DB_PATH = path.join(DATA_ROOT, 'demo-workspace.json');
+
+function resolveWorkspacePath(mode: WorkspaceMode, sessionId?: string | null): string {
+  if (sessionId && /^[a-zA-Z0-9_-]{8,64}$/.test(sessionId)) {
+    return path.join(SESSIONS_DIR, `${mode}_${sessionId}.json`);
+  }
+  return mode === 'demo' ? DEMO_DB_PATH : LIVE_DB_PATH;
+}
 
 export function computeReadiness(twin: TwinProfile): TwinReadiness {
   const faceCats = new Set(twin.faceAssets.map((a) => a.category));
@@ -167,10 +175,7 @@ function defaultDemoOnlineIdeas(now = new Date().toISOString()) {
 function defaultIntegrations(geminiOk: boolean, ffmpegOk: boolean): IntegrationConnector[] {
   const kokoroUrl = process.env.KOKORO_TTS_URL || '';
   const piperUrl = process.env.PIPER_TTS_URL || '';
-  const elevenKey = process.env.ELEVENLABS_API_KEY || '';
-  const livePortraitUrl = process.env.LIVEPORTRAIT_URL || '';
-  const heygenKey = process.env.HEYGEN_API_KEY || '';
-  const n8nUrl = process.env.N8N_WEBHOOK_URL || '';
+  const veoUnlocked = String(process.env.ALLOW_PAID_GEMINI_VEO || '').toLowerCase() === 'true';
 
   return [
     {
@@ -250,14 +255,17 @@ function defaultIntegrations(geminiOk: boolean, ffmpegOk: boolean): IntegrationC
       name: 'Gemini Omni / Veo Video Generator',
       category: 'Avatar & Lip-Sync',
       tier: 'premium',
-      description: 'Photorealistic image-to-video motion generation via Gemini Interactions API. Always gated by explicit cost approval.',
-      configured: geminiOk,
+      description:
+        'Photorealistic image-to-video generation via Gemini Interactions API. Hard-locked server-side unless ALLOW_PAID_GEMINI_VEO=true + verified prepaid credits or owner key.',
+      configured: geminiOk && veoUnlocked,
       endpointUrl: 'server://gemini-omni-1.2-flash',
-      status: geminiOk ? 'connected' : 'unconfigured',
-      capabilities: ['720p Portrait Animation', 'Reference Image Conditioning', 'FFmpeg Post-Mastering'],
+      status: geminiOk && veoUnlocked ? 'connected' : 'unconfigured',
+      capabilities: ['720p Portrait Animation', 'Server Zero-Bill Lock', 'Prepaid Credit / Remix Gate'],
       supportsVoiceCloning: false,
       lastCheckedAt: new Date().toISOString(),
-      notes: 'Requires paid-tier API key and per-job cost authorization in Video Studio.',
+      notes: veoUnlocked
+        ? 'Unlocked on server; requires verified prepaid credit balance or owner token per render.'
+        : 'LOCKED by Developer Zero-Bill Shield ($0.00 risk). Testers use Free Cinema, own 3P tokens below, or Remix in AI Studio.',
     },
     {
       id: 'kokoro_local',
@@ -275,31 +283,64 @@ function defaultIntegrations(geminiOk: boolean, ffmpegOk: boolean): IntegrationC
     },
     {
       id: 'elevenlabs_webhook',
-      name: 'ElevenLabs Personal Voice Clone',
+      name: 'ElevenLabs Personal Voice Clone (Tester Own Key)',
       category: 'Voice Engine',
       tier: 'premium',
-      description: 'Authorized personal voice cloning connector for Hindi, Hinglish, and English emotional inflection.',
-      configured: Boolean(elevenKey),
-      endpointUrl: process.env.ELEVENLABS_WEBHOOK_URL || '',
-      status: elevenKey ? 'connected' : 'unconfigured',
-      capabilities: ['Cloned Voice Identity', 'Multilingual Pronunciation', 'Emotion Controls'],
+      description:
+        'Connect your own ElevenLabs voice endpoint + xi-api-key / Bearer token. Calls bill your own ElevenLabs account directly ($0.00 to app developer).',
+      configured: false,
+      endpointUrl: '',
+      httpMethod: 'POST',
+      authType: 'header_key',
+      authHeaderName: 'xi-api-key',
+      apiToken: '',
+      status: 'unconfigured',
+      capabilities: ['Tester Pays Own Provider', 'Cloned Voice Identity', 'xi-api-key / Bearer Auth'],
       supportsVoiceCloning: true,
       lastCheckedAt: null,
-      notes: 'Never substituted silently. Must be explicitly configured and authorized.',
+      notes: 'Stored per-tester session only. Enter e.g. https://api.elevenlabs.io/v1/text-to-speech/<voice_id> + your xi-api-key.',
     },
     {
       id: 'liveportrait_heygen',
-      name: 'LivePortrait / HeyGen Lip-Sync Worker',
+      name: 'LivePortrait / HeyGen Lip-Sync Worker (Tester Own Key)',
       category: 'Avatar & Lip-Sync',
       tier: 'premium',
-      description: 'Dedicated facial expression driving and audio-driven lip-synchronization worker webhook.',
-      configured: Boolean(livePortraitUrl || heygenKey),
-      endpointUrl: livePortraitUrl || '',
-      status: livePortraitUrl || heygenKey ? 'connected' : 'unconfigured',
-      capabilities: ['Neural Lip Sync', 'Natural Eye Blinking', 'Head Motion Driving'],
+      description:
+        'Connect your own LivePortrait GPU endpoint or HeyGen API webhook + Bearer/API token. Dispatches directly to your endpoint so your account is billed.',
+      configured: false,
+      endpointUrl: '',
+      httpMethod: 'POST',
+      authType: 'bearer',
+      authHeaderName: 'Authorization',
+      apiToken: '',
+      status: 'unconfigured',
+      capabilities: ['Tester Pays Own Provider', 'Neural Lip Sync', 'Token-Authenticated Webhook'],
       supportsVoiceCloning: false,
       lastCheckedAt: null,
-      notes: 'Connect a remote LivePortrait GPU endpoint or HeyGen webhook URL.',
+      notes: 'Enter your own LivePortrait worker or HeyGen webhook URL + API token in your isolated session.',
+    },
+    {
+      id: 'custom_paid_video_webhook',
+      name: 'Custom Paid AI Video API (Fal / Replicate / Runway — Tester Token)',
+      category: 'Avatar & Lip-Sync',
+      tier: 'premium',
+      nodeKind: 'http_node',
+      description:
+        'Bring Your Own Paid Video API (Fal.ai, Replicate, Runway, Kling, or custom GPU webhook). Uses your own API token so the provider bills YOU directly — $0.00 to developer.',
+      configured: false,
+      endpointUrl: '',
+      httpMethod: 'POST',
+      authType: 'bearer',
+      authHeaderName: 'Authorization',
+      apiToken: '',
+      customHeadersJson: '{\n  "Content-Type": "application/json"\n}',
+      payloadTemplateJson:
+        '{\n  "prompt": "{{title}} — {{emotion}} studio presenter",\n  "script_text": "{{scriptText}}",\n  "image_url": "{{portraitUrl}}",\n  "audio_url": "{{audioUrl}}",\n  "aspect_ratio": "{{aspectRatio}}",\n  "duration_sec": "{{durationSec}}"\n}',
+      status: 'unconfigured',
+      capabilities: ['BYO Paid Video Token', 'Bearer / X-API-Key Auth', 'FFmpeg Mastering Included'],
+      supportsVoiceCloning: false,
+      lastCheckedAt: null,
+      notes: 'Paste any video generation endpoint returning MP4 bytes or JSON { videoUrl / video_url / output }.',
     },
     {
       id: 'n8n_webhook',
@@ -307,9 +348,9 @@ function defaultIntegrations(geminiOk: boolean, ffmpegOk: boolean): IntegrationC
       category: 'Automation',
       tier: 'balanced',
       description: 'HMAC-SHA256 signed webhook dispatch and callback receiver for automated multi-step publishing.',
-      configured: Boolean(n8nUrl),
-      endpointUrl: n8nUrl,
-      status: n8nUrl ? 'connected' : 'unconfigured',
+      configured: false,
+      endpointUrl: '',
+      status: 'unconfigured',
       capabilities: ['Idempotent Job Dispatch', 'Retry Backoff', 'Execution Audit Logs'],
       supportsVoiceCloning: false,
       lastCheckedAt: null,
@@ -322,15 +363,15 @@ function defaultIntegrations(geminiOk: boolean, ffmpegOk: boolean): IntegrationC
       tier: 'balanced',
       nodeKind: 'instagram_graph',
       description: 'Connect your Instagram Professional/Creator Account ID & Meta Access Token to create Reels containers and publish directly via Graph API v21.0.',
-      configured: Boolean(process.env.INSTAGRAM_IG_USER_ID && process.env.INSTAGRAM_ACCESS_TOKEN),
+      configured: false,
       endpointUrl: 'https://graph.facebook.com/v21.0',
       httpMethod: 'POST',
       authType: 'bearer',
       authHeaderName: 'Authorization',
-      apiToken: process.env.INSTAGRAM_ACCESS_TOKEN || '',
-      accountId: process.env.INSTAGRAM_IG_USER_ID || '',
-      publicMediaBaseUrl: process.env.PUBLIC_MEDIA_BASE_URL || '',
-      status: process.env.INSTAGRAM_IG_USER_ID && process.env.INSTAGRAM_ACCESS_TOKEN ? 'connected' : 'unconfigured',
+      apiToken: '',
+      accountId: '',
+      publicMediaBaseUrl: '',
+      status: 'unconfigured',
       capabilities: ['Reels Media Container', 'Auto Caption & Hashtags', 'Graph API v21.0 Publish', 'Token & ID Verification'],
       supportsVoiceCloning: false,
       lastCheckedAt: null,
@@ -343,15 +384,15 @@ function defaultIntegrations(geminiOk: boolean, ffmpegOk: boolean): IntegrationC
       tier: 'balanced',
       nodeKind: 'facebook_graph',
       description: 'Connect your Facebook Page ID & Page Access Token to upload and publish Reels/Videos directly to your Page via Meta Graph API v21.0.',
-      configured: Boolean(process.env.FACEBOOK_PAGE_ID && process.env.FACEBOOK_ACCESS_TOKEN),
+      configured: false,
       endpointUrl: 'https://graph.facebook.com/v21.0',
       httpMethod: 'POST',
       authType: 'bearer',
       authHeaderName: 'Authorization',
-      apiToken: process.env.FACEBOOK_ACCESS_TOKEN || '',
-      accountId: process.env.FACEBOOK_PAGE_ID || '',
-      publicMediaBaseUrl: process.env.PUBLIC_MEDIA_BASE_URL || '',
-      status: process.env.FACEBOOK_PAGE_ID && process.env.FACEBOOK_ACCESS_TOKEN ? 'connected' : 'unconfigured',
+      apiToken: '',
+      accountId: '',
+      publicMediaBaseUrl: '',
+      status: 'unconfigured',
       capabilities: ['Direct Page Video Post', 'Reels Ready MP4', 'Page Token Auth', 'Live Response Receipt'],
       supportsVoiceCloning: false,
       lastCheckedAt: null,
@@ -364,15 +405,15 @@ function defaultIntegrations(geminiOk: boolean, ffmpegOk: boolean): IntegrationC
       tier: 'balanced',
       nodeKind: 'http_node',
       description: 'Configurable n8n-style HTTP Request Node supporting GET/POST/PUT/PATCH, Bearer/Header/Query auth tokens, custom headers JSON, and template variables ({{videoUrl}}, {{caption}}, {{hashtags}}).',
-      configured: Boolean(n8nUrl),
-      endpointUrl: n8nUrl,
+      configured: false,
+      endpointUrl: '',
       httpMethod: 'POST',
       authType: 'bearer',
       authHeaderName: 'Authorization',
       apiToken: '',
       customHeadersJson: '{\n  "Content-Type": "application/json",\n  "X-Source": "TwinForge-Studio"\n}',
       payloadTemplateJson: '{\n  "title": "{{title}}",\n  "platform": "{{platform}}",\n  "videoUrl": "{{videoUrl}}",\n  "thumbnailUrl": "{{thumbnailUrl}}",\n  "caption": "{{caption}}",\n  "hashtags": "{{hashtags}}",\n  "aspectRatio": "{{aspectRatio}}",\n  "scheduledFor": "{{scheduledFor}}"\n}',
-      status: n8nUrl ? 'connected' : 'unconfigured',
+      status: 'unconfigured',
       capabilities: ['Method GET/POST/PUT/PATCH', 'Bearer / API Key / Query Auth', 'Custom Headers JSON', 'Live Test Execution'],
       supportsVoiceCloning: false,
       lastCheckedAt: null,
@@ -617,7 +658,7 @@ function createInitialLiveState(geminiOk: boolean, ffmpegOk: boolean): Workspace
       monthlyBudgetCapUsd: 25,
       currentMonthSpendUsd: 0,
       requireExplicitPaidApproval: true,
-      defaultQualityTier: 'balanced',
+      defaultQualityTier: 'local_free',
       aiDisclosureDefault: true,
       watermarkText: 'AI DIGITAL TWIN · AUTHORIZED LIKENESS',
       sessionLockEnabled: false,
@@ -1054,7 +1095,7 @@ function createInitialDemoState(geminiOk: boolean, ffmpegOk: boolean): Workspace
       monthlyBudgetCapUsd: 25,
       currentMonthSpendUsd: 0.02,
       requireExplicitPaidApproval: true,
-      defaultQualityTier: 'balanced',
+      defaultQualityTier: 'local_free',
       aiDisclosureDefault: true,
       watermarkText: 'AI DIGITAL TWIN · AUTHORIZED LIKENESS',
       sessionLockEnabled: false,
@@ -1094,6 +1135,7 @@ async function copyDemoImagesIfNeeded(): Promise<void> {
 export async function ensureInitialized(): Promise<void> {
   await Promise.all([
     fs.mkdir(DATA_ROOT, { recursive: true }),
+    fs.mkdir(SESSIONS_DIR, { recursive: true }),
     fs.mkdir(UPLOADS_DIR, { recursive: true }),
     fs.mkdir(AUDIO_DIR, { recursive: true }),
     fs.mkdir(VIDEOS_DIR, { recursive: true }),
@@ -1298,9 +1340,48 @@ async function preRenderDemoVideos(): Promise<void> {
   }
 }
 
-export async function readWorkspace(mode: WorkspaceMode): Promise<WorkspaceState> {
-  const target = mode === 'demo' ? DEMO_DB_PATH : LIVE_DB_PATH;
-  const raw = await fs.readFile(target, 'utf8');
+export async function readWorkspace(mode: WorkspaceMode, sessionId?: string | null): Promise<WorkspaceState> {
+  const target = resolveWorkspacePath(mode, sessionId);
+  let raw: string;
+  try {
+    raw = await fs.readFile(target, 'utf8');
+  } catch {
+    const geminiOk = isGeminiConfigured();
+    const ffmpegOk = await checkFfmpegAvailable();
+    if (mode === 'demo') {
+      try {
+        const seedRaw = await fs.readFile(DEMO_DB_PATH, 'utf8');
+        const seedState: WorkspaceState = JSON.parse(seedRaw);
+        // Strip external tokens when cloning demo into a fresh isolated tester session
+        seedState.integrations = seedState.integrations.map((item) => {
+          if (item.endpointUrl?.startsWith('server://') || item.endpointUrl?.startsWith('local://') || item.endpointUrl?.startsWith('free://') || item.endpointUrl?.startsWith('browser://')) {
+            return item;
+          }
+          return {
+            ...item,
+            apiToken: '',
+            accountId: '',
+            configured: false,
+            status: 'unconfigured',
+            lastTestResult: undefined,
+          };
+        });
+        await fs.mkdir(path.dirname(target), { recursive: true });
+        await fs.writeFile(target, JSON.stringify(seedState, null, 2));
+        raw = JSON.stringify(seedState);
+      } catch {
+        const freshDemo = createInitialDemoState(geminiOk, ffmpegOk);
+        await fs.mkdir(path.dirname(target), { recursive: true });
+        await fs.writeFile(target, JSON.stringify(freshDemo, null, 2));
+        raw = JSON.stringify(freshDemo);
+      }
+    } else {
+      const freshLive = createInitialLiveState(geminiOk, ffmpegOk);
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.writeFile(target, JSON.stringify(freshLive, null, 2));
+      raw = JSON.stringify(freshLive);
+    }
+  }
   const parsed: WorkspaceState = JSON.parse(raw);
   parsed.mode = mode;
   if (!Array.isArray(parsed.onlineIdeas) || (mode === 'demo' && parsed.onlineIdeas.length === 0)) {
@@ -1359,6 +1440,11 @@ export async function readWorkspace(mode: WorkspaceMode): Promise<WorkspaceState
     if (!existing) {
       parsed.integrations.unshift(def);
     } else {
+      if (def.id === 'gemini_omni_veo') {
+        existing.configured = def.configured;
+        existing.status = def.status;
+        existing.notes = def.notes;
+      }
       if (!existing.nodeKind && def.nodeKind) existing.nodeKind = def.nodeKind;
       if (!existing.httpMethod && def.httpMethod) existing.httpMethod = def.httpMethod;
       if (!existing.authType && def.authType) existing.authType = def.authType;
@@ -1381,19 +1467,26 @@ export async function readWorkspace(mode: WorkspaceMode): Promise<WorkspaceState
   return parsed;
 }
 
-export async function writeWorkspace(mode: WorkspaceMode, state: WorkspaceState): Promise<WorkspaceState> {
-  const target = mode === 'demo' ? DEMO_DB_PATH : LIVE_DB_PATH;
+export async function writeWorkspace(
+  mode: WorkspaceMode,
+  state: WorkspaceState,
+  sessionId?: string | null
+): Promise<WorkspaceState> {
+  const target = resolveWorkspacePath(mode, sessionId);
   state.mode = mode;
   state.twin.readiness = computeReadiness(state.twin);
+  await fs.mkdir(path.dirname(target), { recursive: true });
   await fs.writeFile(target, JSON.stringify(state, null, 2));
   return state;
 }
 
-export async function resetLiveWorkspace(): Promise<WorkspaceState> {
+export async function resetLiveWorkspace(sessionId?: string | null): Promise<WorkspaceState> {
   const geminiOk = isGeminiConfigured();
   const ffmpegOk = await checkFfmpegAvailable();
   const fresh = createInitialLiveState(geminiOk, ffmpegOk);
-  await fs.writeFile(LIVE_DB_PATH, JSON.stringify(fresh, null, 2));
+  const target = resolveWorkspacePath('live', sessionId);
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  await fs.writeFile(target, JSON.stringify(fresh, null, 2));
   return fresh;
 }
 

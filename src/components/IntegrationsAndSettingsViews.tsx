@@ -18,7 +18,14 @@ import type {
   WorkspaceMode,
   WorkspaceState,
 } from '../types';
-import { apiRequest, formatCurrency, formatDateShort } from '../lib/api';
+import {
+  apiRequest,
+  formatCurrency,
+  formatDateShort,
+  getOwnerUnlockToken,
+  getTesterSessionId,
+  setOwnerUnlockToken,
+} from '../lib/api';
 
 /* ============================================================================
  * INTEGRATIONS VIEW (Direct Social Graph API + n8n-Style HTTP Node + Workers)
@@ -585,6 +592,63 @@ export const SettingsView: React.FC<{
         </div>
       )}
 
+      {workspace.capabilities.billingProtection && (
+        <section className="bg-[#FFFFFF] border border-[#E4DDD0] rounded-sm p-6 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#E4DDD0] pb-3">
+            <div>
+              <h2 className="font-editorial text-[22px] text-[#242421]">
+                Developer Zero-Bill Shield &amp; Pre-Publish Audit
+              </h2>
+              <p className="text-[13px] text-[#77766F]">
+                Protects the developer from unexpected cloud/AI bills before sharing or publishing preview links.
+              </p>
+            </div>
+            <span
+              className={`px-3 py-1 text-[11px] font-mono font-semibold uppercase rounded-sm ${
+                workspace.capabilities.billingProtection.paidVeoLocked
+                  ? 'bg-[#E9ECE4] text-[#242421] border border-[#777D68]/40'
+                  : 'bg-[#EFE8D8] text-[#242421] border border-[#B69A65]/60'
+              }`}
+            >
+              {workspace.capabilities.billingProtection.paidVeoLocked
+                ? 'PAID VEO SERVER-LOCKED ($0 DEV RISK)'
+                : 'ALLOW_PAID_GEMINI_VEO UNLOCKED'}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-[12px] font-mono">
+            <div className="p-3 bg-[#FAF8F4] border border-[#E4DDD0] rounded-sm">
+              <div className="text-[#77766F] uppercase text-[10px]">Free Database Engine</div>
+              <div className="text-[#242421] font-semibold mt-1">
+                {workspace.capabilities.billingProtection.freeDatabaseEngine}
+              </div>
+            </div>
+            <div className="p-3 bg-[#FAF8F4] border border-[#E4DDD0] rounded-sm">
+              <div className="text-[#77766F] uppercase text-[10px]">Tester Session Isolation</div>
+              <div className="text-[#242421] font-semibold mt-1">
+                Active ({workspace.capabilities.billingProtection.sessionIdPreview}) · Env Tokens Isolated
+              </div>
+            </div>
+            <div className="p-3 bg-[#FAF8F4] border border-[#E4DDD0] rounded-sm">
+              <div className="text-[#77766F] uppercase text-[10px]">Free-Tier Gemini Quota</div>
+              <div className="text-[#242421] font-semibold mt-1">
+                {workspace.capabilities.billingProtection.geminiHourlyRemaining}/
+                {workspace.capabilities.billingProtection.geminiHourlyLimit} hr ·{' '}
+                {workspace.capabilities.billingProtection.geminiDailyRemaining}/
+                {workspace.capabilities.billingProtection.geminiDailyLimit} day
+              </div>
+            </div>
+            <div className="p-3 bg-[#FAF8F4] border border-[#E4DDD0] rounded-sm">
+              <div className="text-[#77766F] uppercase text-[10px]">Prepaid Credit Wallet</div>
+              <div className="text-[#242421] font-semibold mt-1">
+                {formatCurrency(workspace.capabilities.billingProtection.testerCreditBalanceUsd)} ·{' '}
+                {workspace.capabilities.billingProtection.stripeEnabled ? 'Stripe On' : 'BYO Token Mode'}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <form
           onSubmit={handleSave}
@@ -681,7 +745,7 @@ export const SettingsView: React.FC<{
 
           <div className="flex flex-wrap gap-3">
             <a
-              href={`/api/settings/export?mode=${mode}`}
+              href={`/api/settings/export?mode=${mode}&session=${encodeURIComponent(getTesterSessionId())}`}
               className="px-4 py-2.5 bg-[#F6F3EC] border border-[#E4DDD0] text-[#242421] text-[12.5px] font-semibold rounded-sm inline-flex items-center gap-2 hover:border-[#B69A65]"
             >
               <Download className="w-4 h-4 text-[#B69A65]" />
@@ -765,9 +829,12 @@ export const ProfileLockModal: React.FC<{
 }> = ({ workspace, mode, onUpdateWorkspace, onClose }) => {
   const [email, setEmail] = useState(workspace.settings.creatorEmail || 'Samymehra071213@gmail.com');
   const [lockEnabled, setLockEnabled] = useState(workspace.settings.sessionLockEnabled);
+  const [ownerToken, setOwnerToken] = useState(() => getOwnerUnlockToken());
+  const billingProt = workspace.capabilities.billingProtection;
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    setOwnerUnlockToken(ownerToken);
     const updated = await apiRequest<WorkspaceState>('/api/settings', mode, {
       method: 'PUT',
       body: JSON.stringify({
@@ -793,8 +860,14 @@ export const ProfileLockModal: React.FC<{
         </div>
 
         <form onSubmit={handleSave} className="p-6 space-y-4">
-          <div className="p-3 bg-[#F6F3EC] border border-[#E4DDD0] rounded-sm text-[12.5px] text-[#77766F]">
-            Single-creator local studio session. Biometric assets stay stored locally inside your server vault.
+          <div className="p-3 bg-[#F6F3EC] border border-[#E4DDD0] rounded-sm text-[12px] text-[#77766F] space-y-1">
+            <div>Isolated Tester Session: <span className="font-mono text-[#242421]">{getTesterSessionId()}</span></div>
+            {billingProt && (
+              <div>
+                Prepaid Credits: <span className="font-mono text-[#242421]">{formatCurrency(billingProt.testerCreditBalanceUsd)}</span> · Zero-Bill Veo Lock:{' '}
+                <span className="font-mono text-[#242421]">{billingProt.paidVeoLocked ? 'LOCKED' : 'ACTIVE'}</span>
+              </div>
+            )}
           </div>
           <div>
             <label className="block text-[11px] font-semibold uppercase text-[#77766F] mb-1">
@@ -806,6 +879,21 @@ export const ProfileLockModal: React.FC<{
               onChange={(e) => setEmail(e.target.value)}
               className="w-full px-3 py-2 border border-[#E4DDD0] text-[13.5px] rounded-sm"
             />
+          </div>
+          <div>
+            <label className="block text-[11px] font-semibold uppercase text-[#77766F] mb-1">
+              Developer Owner Unlock Passcode (Optional)
+            </label>
+            <input
+              type="password"
+              value={ownerToken}
+              onChange={(e) => setOwnerToken(e.target.value)}
+              placeholder="Matches OWNER_UNLOCK_TOKEN secret if enabled..."
+              className="w-full px-3 py-2 border border-[#E4DDD0] font-mono text-[12.5px] rounded-sm"
+            />
+            <p className="text-[11px] text-[#77766F] mt-1">
+              Optional developer passcode stored only in browser sessionStorage. Leave blank for public tester mode.
+            </p>
           </div>
           <label className="flex items-start gap-2.5 text-[13px] cursor-pointer">
             <input

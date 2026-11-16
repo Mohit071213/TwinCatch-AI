@@ -36,6 +36,7 @@ import {
   fetchOnlineViralIdeas,
   generateIntelligenceScripts,
   generatePremiumVeoClip,
+  isGeminiConfigured,
   rewriteScriptVariant,
   synthesizeGeminiSpeechWav,
   transcribeUploadedAudio,
@@ -63,12 +64,49 @@ import {
 } from './server/store.ts';
 import { VISUAL_PROMPT_LIBRARY } from './src/lib/promptLibrary.ts';
 import { SCENE_CACHE_DIR, planAndFetchScriptVisuals } from './server/visualDirector.ts';
+import {
+  consumeFreeGeminiQuota,
+  createStripeCheckoutSession,
+  deductTesterCredits,
+  evaluatePaidVeoAccess,
+  getBillingProtectionStatus,
+  inspectFreeGeminiQuota,
+  isOwnerAuthorized,
+  isPaidVeoFlagEnabled,
+  isStripeConfigured,
+  refundTesterCredits,
+  resolveSessionId,
+  verifyAndApplyStripeSession,
+} from './server/billing.ts';
 
 function resolveMode(req: express.Request): WorkspaceMode {
   const header = req.headers['x-workspace-mode'];
   const q = req.query.mode;
   if (header === 'demo' || q === 'demo') return 'demo';
   return 'live';
+}
+
+async function readReqWorkspace(req: express.Request): Promise<{
+  mode: WorkspaceMode;
+  sessionId: string | null;
+  state: WorkspaceState;
+}> {
+  const mode = resolveMode(req);
+  const sessionId = resolveSessionId(req);
+  const state = await readWorkspace(mode, sessionId);
+  state.capabilities.billingProtection = await getBillingProtectionStatus({ req, sessionId });
+  return { mode, sessionId, state };
+}
+
+async function writeReqWorkspace(
+  req: express.Request,
+  state: WorkspaceState
+): Promise<WorkspaceState> {
+  const mode = resolveMode(req);
+  const sessionId = resolveSessionId(req);
+  const saved = await writeWorkspace(mode, state, sessionId);
+  saved.capabilities.billingProtection = await getBillingProtectionStatus({ req, sessionId });
+  return saved;
 }
 
 function safeFilename(original: string): string {
@@ -98,7 +136,8 @@ function estimateJobCost(
   qualityTier: QualityTier,
   voiceProvider: VoiceProviderId,
   visualProvider: VisualProviderId,
-  durationSec: number
+  durationSec: number,
+  veoGate?: { allowed: boolean; billedTo: 'owner' | 'tester_credits' | 'blocked'; reason?: string }
 ): CostEstimate {
   const mins = Math.max(0.5, durationSec / 60);
 
@@ -110,6 +149,7 @@ function estimateJobCost(
   if (visualProvider === 'gemini_omni_veo') visualRate = 0.45;
   else if (visualProvider === 'liveportrait_webhook') visualRate = 0.14;
   else if (visualProvider === 'heygen_webhook') visualRate = 0.6;
+  else if (visualProvider === 'custom_paid_video_webhook') visualRate = 0.25;
 
   const estimatedVoiceUsd = Number((voiceRate * mins).toFixed(4));
   const estimatedVisualUsd = Number((visualRate * mins).toFixed(4));
@@ -119,6 +159,26 @@ function estimateJobCost(
     visualProvider === 'free_canvas_animator' ||
     visualProvider === 'ffmpeg_local' ||
     visualProvider === 'free_hf_space';
+
+  const isByoPaidProvider =
+    voiceProvider === 'elevenlabs_webhook' ||
+    visualProvider === 'liveportrait_webhook' ||
+    visualProvider === 'heygen_webhook' ||
+    visualProvider === 'custom_paid_video_webhook';
+
+  const paidVeoBlockedByServer =
+    visualProvider === 'gemini_omni_veo' && veoGate ? !veoGate.allowed : false;
+
+  const billingResponsibility: CostEstimate['billingResponsibility'] =
+    paidVeoBlockedByServer
+      ? 'blocked_developer_shield'
+      : visualProvider === 'gemini_omni_veo'
+        ? veoGate?.billedTo === 'owner'
+          ? 'owner_authorized'
+          : 'tester_prepaid_credits'
+        : isByoPaidProvider
+          ? 'tester_byo_provider'
+          : 'free_zero_cost';
 
   const requiresExplicitPaidApproval =
     qualityTier === 'premium' ||
@@ -131,7 +191,14 @@ function estimateJobCost(
   let recommendedUpgradeTier: QualityTier | undefined;
   let recommendedUpgradeReason: string | undefined;
 
-  if (qualityTier === 'local_free') {
+  if (paidVeoBlockedByServer) {
+    qualityAdvisory =
+      veoGate?.reason ||
+      'Gemini Omni / Veo is locked by Developer Zero-Bill Shield ($0.00 risk). Use Free Cinema, your own Paid Provider Token in Integrations, or Remix in AI Studio.';
+  } else if (isByoPaidProvider) {
+    qualityAdvisory =
+      'Bring-Your-Own Paid API active: calls authenticate with YOUR token in Integrations so your own provider account gets billed directly ($0.00 developer cost).';
+  } else if (qualityTier === 'local_free') {
     const freeVoiceLabel =
       voiceProvider === 'free_hindi_neural'
         ? 'Free Natural Hindi / Indian Neural Voice ($0.00)'
@@ -146,10 +213,7 @@ function estimateJobCost(
           : `${freeVoiceLabel} + 6-Shot FFmpeg Cinema Director active — renders minimum 30s multi-angle cuts, LUT color grades, xfade transitions, and subtitles at $0.00 cost.`;
   } else if (qualityTier === 'balanced' && isFreeVisual) {
     qualityAdvisory =
-      'Balanced Mode pairs expressive Gemini 3.8 TTS voiceover (Free-Tier Gemini API Eligible) with multi-angle cinema cuts (>=30s). Upgrade to Premium Realism only when generative Veo 3D head motion is needed.';
-    recommendedUpgradeTier = 'premium';
-    recommendedUpgradeReason =
-      'Upgrade to Premium Realism (Gemini Omni / Veo or LivePortrait) when photorealistic 3D generative facial motion is required.';
+      'Balanced Mode pairs expressive Gemini 3.8 TTS voiceover (Free-Tier Gemini API Eligible) with multi-angle cinema cuts (>=30s) at $0.00 cost.';
   } else if (qualityTier === 'premium') {
     qualityAdvisory =
       'Premium Realism Mode pairs photorealistic generative/neural motion with local FFmpeg audio muxing, captions, and provenance watermarking.';
@@ -167,6 +231,9 @@ function estimateJobCost(
     qualityAdvisory,
     recommendedUpgradeTier,
     recommendedUpgradeReason,
+    paidVeoBlockedByServer,
+    billingResponsibility,
+    blockReason: paidVeoBlockedByServer ? veoGate?.reason : undefined,
   };
 }
 
@@ -250,6 +317,83 @@ function scoreNicheRelevance(text: string, niche: string): number {
   return Math.min(98, Math.max(58, 60 + hits * 7));
 }
 
+async function dispatchExternalPaidVideoWorker(params: {
+  connector: IntegrationConnector;
+  vars: Record<string, string>;
+  defaultPayload: Record<string, any>;
+  outputRawMp4Path: string;
+}): Promise<void> {
+  const { url, headers, method } = buildHttpNodeRequestConfig(params.connector);
+  if (!url) {
+    throw new Error(`${params.connector.name} endpoint URL is missing in Integrations.`);
+  }
+  const hasAuthHeader = Object.keys(headers).some(
+    (k) => k.toLowerCase() !== 'content-type'
+  );
+  const hasQueryToken = url.includes('=') && Boolean(params.connector.apiToken?.trim());
+  if (!params.connector.apiToken?.trim() && !hasAuthHeader && !hasQueryToken) {
+    throw new Error(
+      `${params.connector.name} requires YOUR own API Token / Authorization key in Integrations so the provider bills your account ($0.00 developer bill).`
+    );
+  }
+
+  const bodyStr =
+    method === 'GET'
+      ? undefined
+      : params.connector.payloadTemplateJson?.trim()
+        ? renderHttpNodePayload(params.connector.payloadTemplateJson, params.vars)
+        : JSON.stringify(params.defaultPayload);
+
+  const resp = await fetch(url, {
+    method,
+    headers,
+    body: bodyStr,
+    signal: AbortSignal.timeout(45000),
+  });
+
+  if (!resp.ok) {
+    const errText = (await resp.text().catch(() => '')).slice(0, 220);
+    throw new Error(
+      `${params.connector.name} returned HTTP ${resp.status}${errText ? `: ${errText}` : ''}. Verify your token and billing balance with that provider.`
+    );
+  }
+
+  const contentType = (resp.headers.get('content-type') || '').toLowerCase();
+  if (contentType.includes('video/') || contentType.includes('application/octet-stream')) {
+    const buf = Buffer.from(await resp.arrayBuffer());
+    if (buf.byteLength < 1024) {
+      throw new Error(`${params.connector.name} returned an empty video payload.`);
+    }
+    await fs.writeFile(params.outputRawMp4Path, buf);
+    return;
+  }
+
+  const data: any = await resp.json().catch(() => null);
+  const remoteVideoUrl =
+    data?.videoUrl ||
+    data?.video_url ||
+    data?.url ||
+    data?.data?.video_url ||
+    data?.result?.url ||
+    (Array.isArray(data?.output) ? data.output[0] : undefined);
+
+  if (!remoteVideoUrl || typeof remoteVideoUrl !== 'string') {
+    throw new Error(
+      `${params.connector.name} responded HTTP ${resp.status}, but no MP4 stream or videoUrl/video_url JSON field was returned.`
+    );
+  }
+
+  const dlResp = await fetch(remoteVideoUrl, { signal: AbortSignal.timeout(30000) });
+  if (!dlResp.ok) {
+    throw new Error(`Failed to download rendered video from ${params.connector.name} (HTTP ${dlResp.status}).`);
+  }
+  const vidBuf = Buffer.from(await dlResp.arrayBuffer());
+  if (vidBuf.byteLength < 1024) {
+    throw new Error(`${params.connector.name} returned an invalid video URL payload.`);
+  }
+  await fs.writeFile(params.outputRawMp4Path, vidBuf);
+}
+
 async function startServer() {
   await ensureInitialized();
 
@@ -278,11 +422,64 @@ async function startServer() {
     res.json({ ok: true, status: 'ready', uptimeSec: Math.round(process.uptime()) });
   });
 
+  // Billing Protection & Stripe Prepaid Credit Endpoints (Free Local Ledger)
+  app.get('/api/billing/status', async (req, res) => {
+    try {
+      const sessionId = resolveSessionId(req);
+      res.json(await getBillingProtectionStatus({ req, sessionId }));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/billing/create-checkout-session', async (req, res) => {
+    try {
+      const sessionId = resolveSessionId(req);
+      if (!sessionId) {
+        return res.status(400).json({ error: 'Tester workspace session header is required.' });
+      }
+      if (!isPaidVeoFlagEnabled() || !isStripeConfigured()) {
+        return res.status(403).json({
+          error:
+            'Prepaid Stripe Checkout is not enabled by the developer on this preview. Paid Gemini Veo stays locked ($0.00 developer risk). Connect your own Paid API token in Integrations or Remix in AI Studio.',
+        });
+      }
+      const amountUsd = Math.max(2, Math.min(100, Number(req.body?.amountUsd) || 5));
+      const reqOrigin = `${req.headers['x-forwarded-proto'] || req.protocol}://${req.headers['x-forwarded-host'] || req.get('host')}`;
+      const session = await createStripeCheckoutSession({
+        sessionId,
+        amountUsd,
+        successUrl: `${reqOrigin}/?stripe_session_id={CHECKOUT_SESSION_ID}`,
+        cancelUrl: `${reqOrigin}/?stripe_cancelled=1`,
+      });
+      res.json(session);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to start Stripe Checkout.' });
+    }
+  });
+
+  app.post('/api/billing/verify-stripe-session', async (req, res) => {
+    try {
+      const sessionId = resolveSessionId(req);
+      if (!sessionId) {
+        return res.status(400).json({ error: 'Tester workspace session header is required.' });
+      }
+      const stripeSessionId = String(req.body?.stripeSessionId || '').trim();
+      if (!stripeSessionId) {
+        return res.status(400).json({ error: 'stripeSessionId is required.' });
+      }
+      const result = await verifyAndApplyStripeSession({ stripeSessionId, sessionId });
+      const status = await getBillingProtectionStatus({ req, sessionId });
+      res.json({ ...result, billingProtection: status });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to verify Stripe payment.' });
+    }
+  });
+
   // Get workspace state
   app.get('/api/workspace', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       res.json(state);
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to load workspace.' });
@@ -292,12 +489,11 @@ async function startServer() {
   // Upload Face / Reference Clip
   app.post('/api/twin/upload-face', upload.single('file'), async (req, res) => {
     try {
-      const mode = resolveMode(req);
       if (!req.file) return res.status(400).json({ error: 'No image or video file received.' });
       const category = (req.body.category || 'front') as FaceCategory;
       const label = String(req.body.label || req.file.originalname);
 
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       state.twin.faceAssets.unshift({
         id: `face_${crypto.randomUUID().slice(0, 8)}`,
         category,
@@ -316,7 +512,7 @@ async function startServer() {
         detail: `${label} (${category}) uploaded to local identity vault.`,
       });
 
-      const saved = await writeWorkspace(mode, state);
+      const saved = await writeReqWorkspace(req, state);
       res.json(saved);
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Face upload failed.' });
@@ -325,8 +521,7 @@ async function startServer() {
 
   app.delete('/api/twin/face/:id', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       const target = state.twin.faceAssets.find((f) => f.id === req.params.id);
       state.twin.faceAssets = state.twin.faceAssets.filter((f) => f.id !== req.params.id);
       if (target && target.url.startsWith('/api/media/uploads/')) {
@@ -338,7 +533,7 @@ async function startServer() {
         action: 'Face Reference Removed',
         detail: `Removed face reference ${target?.label || req.params.id}.`,
       });
-      res.json(await writeWorkspace(mode, state));
+      res.json(await writeReqWorkspace(req, state));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -347,7 +542,6 @@ async function startServer() {
   // Upload Voice Sample (file or mic recording)
   app.post('/api/twin/upload-voice', upload.single('file'), async (req, res) => {
     try {
-      const mode = resolveMode(req);
       if (!req.file) return res.status(400).json({ error: 'No audio recording received.' });
 
       const label = String(req.body.label || req.file.originalname || 'Voice Sample');
@@ -356,7 +550,7 @@ async function startServer() {
       const diskPath = path.join(UPLOADS_DIR, req.file.filename);
       const durationSec = await getMediaDurationSec(diskPath);
 
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       state.twin.voiceSamples.unshift({
         id: `voice_${crypto.randomUUID().slice(0, 8)}`,
         label,
@@ -378,7 +572,7 @@ async function startServer() {
         detail: `${label} (${language} · ${emotion}) saved.`,
       });
 
-      res.json(await writeWorkspace(mode, state));
+      res.json(await writeReqWorkspace(req, state));
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Voice upload failed.' });
     }
@@ -386,13 +580,16 @@ async function startServer() {
 
   app.post('/api/twin/transcribe-voice/:id', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { sessionId, state } = await readReqWorkspace(req);
       const sample = state.twin.voiceSamples.find((v) => v.id === req.params.id);
       if (!sample) return res.status(404).json({ error: 'Voice sample not found.' });
       const localPath = resolveLocalAssetPath(sample.url);
       if (!localPath) {
         return res.status(400).json({ error: 'This sample has no audio file on disk to transcribe.' });
+      }
+      if (isGeminiConfigured()) {
+        const q = await consumeFreeGeminiQuota(req, sessionId);
+        if (!q.ok) return res.status(429).json({ error: q.error });
       }
       const transcript = await transcribeUploadedAudio({
         audioFilePath: localPath,
@@ -409,7 +606,7 @@ async function startServer() {
         detail: `Transcribed "${sample.label}" via Gemini 3.5 Transcribe.`,
       });
 
-      res.json(await writeWorkspace(mode, state));
+      res.json(await writeReqWorkspace(req, state));
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Voice transcription failed.' });
     }
@@ -417,8 +614,7 @@ async function startServer() {
 
   app.post('/api/twin/verify-voice/:id', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       const sample = state.twin.voiceSamples.find((v) => v.id === req.params.id);
       if (!sample) return res.status(404).json({ error: 'Voice sample not found.' });
       const manualTranscript = String(req.body?.transcript || '').trim();
@@ -434,7 +630,7 @@ async function startServer() {
         action: 'Voice Sample Verified',
         detail: `Creator verified "${sample.label}" (${sample.language}).`,
       });
-      res.json(await writeWorkspace(mode, state));
+      res.json(await writeReqWorkspace(req, state));
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Voice verification failed.' });
     }
@@ -442,14 +638,13 @@ async function startServer() {
 
   app.delete('/api/twin/voice/:id', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       const target = state.twin.voiceSamples.find((v) => v.id === req.params.id);
       state.twin.voiceSamples = state.twin.voiceSamples.filter((v) => v.id !== req.params.id);
       if (target && target.url.startsWith('/api/media/uploads/')) {
         await fs.unlink(path.join(UPLOADS_DIR, path.basename(target.url))).catch(() => {});
       }
-      res.json(await writeWorkspace(mode, state));
+      res.json(await writeReqWorkspace(req, state));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -457,8 +652,7 @@ async function startServer() {
 
   app.put('/api/twin/personality', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       state.twin.personality = {
         ...state.twin.personality,
         ...req.body,
@@ -469,7 +663,7 @@ async function startServer() {
         action: 'Personality Profile Updated',
         detail: `Updated speaking persona for ${state.twin.personality.creatorName || 'creator'} (${state.twin.personality.primaryLanguage}).`,
       });
-      res.json(await writeWorkspace(mode, state));
+      res.json(await writeReqWorkspace(req, state));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -477,8 +671,7 @@ async function startServer() {
 
   app.post('/api/twin/consent', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       const { ownerFullName, likenessUsageScope, requireAiDisclosure, attested } = req.body;
       state.twin.consent = {
         attested: Boolean(attested),
@@ -495,7 +688,7 @@ async function startServer() {
         action: attested ? 'Biometric Likeness Consent Signed' : 'Consent Revoked',
         detail: `Owner: ${ownerFullName || 'Unspecified'} · AI Disclosure: ${requireAiDisclosure ? 'Required' : 'Optional'}`,
       });
-      res.json(await writeWorkspace(mode, state));
+      res.json(await writeReqWorkspace(req, state));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -504,8 +697,7 @@ async function startServer() {
   // Live RSS Trend Radar Fetch
   app.post('/api/trends/refresh', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
       const fetchedItems: TrendItem[] = [];
       const feedErrors: string[] = [];
@@ -598,7 +790,7 @@ async function startServer() {
         detail: `Imported ${fetchedItems.length} live feed articles across ${enabledFeeds.length} sources.`,
       });
 
-      const saved = await writeWorkspace(mode, state);
+      const saved = await writeReqWorkspace(req, state);
       res.json({ workspace: saved, fetchedCount: fetchedItems.length, feedErrors });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to refresh RSS feeds.' });
@@ -607,8 +799,7 @@ async function startServer() {
 
   app.post('/api/trends/import', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       const { topic, platform, category, sourceUrl, summary, views, engagementRate } = req.body;
       if (!topic || !String(topic).trim()) {
         return res.status(400).json({ error: 'Trend topic is required.' });
@@ -648,7 +839,7 @@ async function startServer() {
         action: 'Trend Imported Manually',
         detail: `${item.topic} (${item.platform} · ${item.category})`,
       });
-      res.json(await writeWorkspace(mode, state));
+      res.json(await writeReqWorkspace(req, state));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -657,8 +848,7 @@ async function startServer() {
   // Online Viral Ideas Search (Google Search Grounding across Comedy, Science, Knowledge, etc.)
   app.post('/api/intelligence/fetch-online', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { sessionId, state } = await readReqWorkspace(req);
       const { genre, query, language, alsoImportToRadar } = req.body as {
         genre?: ScriptGenre;
         query?: string;
@@ -669,6 +859,11 @@ async function startServer() {
       const targetGenre: ScriptGenre = genre || 'Knowledge';
       const targetLang: TwinLanguage =
         language || state.twin.personality.primaryLanguage || 'Hindi';
+
+      if (isGeminiConfigured()) {
+        const q = await consumeFreeGeminiQuota(req, sessionId);
+        if (!q.ok) return res.status(429).json({ error: q.error });
+      }
 
       const { ideas, groundingSources } = await fetchOnlineViralIdeas({
         genre: targetGenre,
@@ -725,7 +920,7 @@ async function startServer() {
         detail: `Discovered ${ideas.length} grounded ${targetGenre} ideas (${groundingSources.length} web sources).`,
       });
 
-      const saved = await writeWorkspace(mode, state);
+      const saved = await writeReqWorkspace(req, state);
       res.json({ workspace: saved, ideas, groundingSources });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to fetch online viral ideas.' });
@@ -735,8 +930,7 @@ async function startServer() {
   // Create Blank / Manual Script Pack for Custom Writing & AI Assist
   app.post('/api/intelligence/create-blank', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       const { title, trendTopic, genre, writingStyle, language, hook3s, body, cta } = req.body as {
         title?: string;
         trendTopic?: string;
@@ -794,7 +988,7 @@ async function startServer() {
         detail: `${topicTitle} (${pack.genre} · ${lang})`,
       });
 
-      const saved = await writeWorkspace(mode, state);
+      const saved = await writeReqWorkspace(req, state);
       res.json({ workspace: saved, scriptId: pack.id });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to create blank script.' });
@@ -804,8 +998,7 @@ async function startServer() {
   // Content Intelligence Script Generation
   app.post('/api/intelligence/generate', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { sessionId, state } = await readReqWorkspace(req);
       const {
         trendId,
         trendTopic,
@@ -826,6 +1019,11 @@ async function startServer() {
         sourceUrl?: string;
       };
       if (!trendTopic) return res.status(400).json({ error: 'A trend topic or prompt is required.' });
+
+      if (isGeminiConfigured()) {
+        const q = await consumeFreeGeminiQuota(req, sessionId);
+        if (!q.ok) return res.status(429).json({ error: q.error });
+      }
 
       const result = await generateIntelligenceScripts({
         trendTopic: String(trendTopic),
@@ -855,7 +1053,7 @@ async function startServer() {
         detail: `${pack.trendTopic.slice(0, 56)} (${pack.language})`,
       });
 
-      const saved = await writeWorkspace(mode, state);
+      const saved = await writeReqWorkspace(req, state);
       res.json({ workspace: saved, scriptId: pack.id });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Script generation failed.' });
@@ -865,8 +1063,7 @@ async function startServer() {
   // AI Writing Assist / Rewrite on an active script variant
   app.post('/api/intelligence/:id/rewrite', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { sessionId, state } = await readReqWorkspace(req);
       const pack = state.scripts.find((s) => s.id === req.params.id);
       if (!pack) return res.status(404).json({ error: 'Script pack not found.' });
 
@@ -876,6 +1073,11 @@ async function startServer() {
         pack.variants.find((v) => v.id === pack.selectedVariantId) ||
         pack.variants[0];
       if (!targetVar) return res.status(404).json({ error: 'Script variant not found.' });
+
+      if (isGeminiConfigured()) {
+        const q = await consumeFreeGeminiQuota(req, sessionId);
+        if (!q.ok) return res.status(429).json({ error: q.error });
+      }
 
       const rewritten = await rewriteScriptVariant({
         hook3s: targetVar.hook3s,
@@ -905,7 +1107,7 @@ async function startServer() {
         detail: `${pack.trendTopic.slice(0, 54)} (${rewritten.wordCount} words)`,
       });
 
-      const saved = await writeWorkspace(mode, state);
+      const saved = await writeReqWorkspace(req, state);
       res.json({ workspace: saved, action });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Script rewrite failed.' });
@@ -914,8 +1116,7 @@ async function startServer() {
 
   app.put('/api/intelligence/:id', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       const idx = state.scripts.findIndex((s) => s.id === req.params.id);
       if (idx === -1) return res.status(404).json({ error: 'Script pack not found.' });
 
@@ -934,7 +1135,7 @@ async function startServer() {
         });
       }
 
-      res.json(await writeWorkspace(mode, state));
+      res.json(await writeReqWorkspace(req, state));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -943,8 +1144,7 @@ async function startServer() {
   // Voice Engine Audition
   app.post('/api/voice/audition', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { sessionId, state } = await readReqWorkspace(req);
       const {
         text,
         provider,
@@ -1005,6 +1205,12 @@ async function startServer() {
           resolvedVoiceLabel = `${edgeRes.voiceUsed} (Free Conversational Hindi Neural)`;
         } catch (edgeErr: any) {
           // Explicit documented fallback to Gemini Lite TTS if Edge TTS endpoint is temporarily unreachable
+          const q = await consumeFreeGeminiQuota(req, sessionId);
+          if (!q.ok) {
+            return res.status(429).json({
+              error: `Free Edge TTS stream temporarily unreachable (${edgeErr.message || 'network'}) and ${q.error}`,
+            });
+          }
           const ttsResult = await synthesizeGeminiSpeechWav({
             text: text.slice(0, 900),
             provider: 'gemini_lite_tts',
@@ -1049,23 +1255,36 @@ async function startServer() {
         if (!connector?.endpointUrl) {
           return res.status(400).json({
             error:
-              'ElevenLabs Personal Voice Clone connector is unconfigured. Configure its webhook URL in Integrations before auditioning.',
+              'ElevenLabs Personal Voice Clone connector requires YOUR endpoint URL and API key in Integrations so ElevenLabs bills your account ($0.00 developer bill).',
           });
         }
-        const resp = await fetch(connector.endpointUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, voiceIdentity, language, emotion }),
+        const { url, headers, method } = buildHttpNodeRequestConfig(connector);
+        const resp = await fetch(url, {
+          method: method === 'GET' ? 'POST' : method,
+          headers,
+          body: JSON.stringify({
+            text,
+            model_id: 'eleven_multilingual_v2',
+            voiceIdentity,
+            language,
+            emotion,
+          }),
+          signal: AbortSignal.timeout(25000),
         });
         if (!resp.ok) {
+          const errText = (await resp.text().catch(() => '')).slice(0, 180);
           return res.status(502).json({
-            error: `ElevenLabs webhook returned HTTP ${resp.status}.`,
+            error: `ElevenLabs webhook returned HTTP ${resp.status}${errText ? `: ${errText}` : ''}. Verify your personal API token in Integrations.`,
           });
         }
         const buf = Buffer.from(await resp.arrayBuffer());
         await fs.writeFile(outPath, buf);
-        resolvedVoiceLabel = voiceIdentity || 'Authorized Cloned Voice';
+        resolvedVoiceLabel = `${voiceIdentity || 'Authorized Cloned Voice'} (Your Token)`;
       } else {
+        const q = await consumeFreeGeminiQuota(req, sessionId);
+        if (!q.ok) {
+          return res.status(429).json({ error: q.error });
+        }
         const ttsResult = await synthesizeGeminiSpeechWav({
           text: text.slice(0, 900),
           provider,
@@ -1097,7 +1316,7 @@ async function startServer() {
                 : resolvedProvider === 'gemini_lite_tts'
                   ? 'Gemini 3.8 Flash Lite TTS'
                   : resolvedProvider === 'elevenlabs_webhook'
-                    ? 'ElevenLabs Personal Clone'
+                    ? 'ElevenLabs Personal Clone (Your Token)'
                     : 'Local Kokoro / Piper';
 
       const audition = {
@@ -1126,7 +1345,7 @@ async function startServer() {
         costImpactUsd: estCost,
       });
 
-      const saved = await writeWorkspace(mode, state);
+      const saved = await writeReqWorkspace(req, state);
       res.json({ workspace: saved, audition });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Voice audition failed.' });
@@ -1136,16 +1355,22 @@ async function startServer() {
   // Pre-generation Cost Estimator & Quality Fallback Advisory
   app.post('/api/studio/estimate', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { sessionId, state } = await readReqWorkspace(req);
       const { qualityTier, voiceProvider, visualProvider, durationSec } = req.body;
-      const estimate = estimateJobCost(
-        state,
-        qualityTier || 'balanced',
-        voiceProvider || 'free_hindi_neural',
-        visualProvider || 'ffmpeg_local',
-        Math.max(MIN_VIDEO_DURATION_SEC, Number(durationSec) || MIN_VIDEO_DURATION_SEC)
-      );
+      const safeDur = Math.max(MIN_VIDEO_DURATION_SEC, Number(durationSec) || MIN_VIDEO_DURATION_SEC);
+      const qTier = (qualityTier || 'local_free') as QualityTier;
+      const vProv = (voiceProvider || 'free_hindi_neural') as VoiceProviderId;
+      const visProv = (visualProvider || 'ffmpeg_local') as VisualProviderId;
+      const prelim = estimateJobCost(state, qTier, vProv, visProv, safeDur);
+      const veoGate =
+        visProv === 'gemini_omni_veo'
+          ? await evaluatePaidVeoAccess({
+              req,
+              sessionId,
+              estimatedUsd: prelim.estimatedTotalUsd,
+            })
+          : undefined;
+      const estimate = estimateJobCost(state, qTier, vProv, visProv, safeDur, veoGate);
       res.json(estimate);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1160,8 +1385,7 @@ async function startServer() {
   // Plan script-matched backgrounds, prompt-library presets & diverse presenter visuals
   app.post('/api/studio/plan-visuals', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { mode, sessionId, state } = await readReqWorkspace(req);
       const {
         title,
         scriptText,
@@ -1212,6 +1436,15 @@ async function startServer() {
           diskPath: resolveLocalAssetPath(f.url) || undefined,
         }));
 
+      let allowGeminiVision = false;
+      if (isGeminiConfigured()) {
+        const q = await inspectFreeGeminiQuota(req, sessionId);
+        if (q.hourlyRemaining > 0 && q.dailyRemaining > 0) {
+          allowGeminiVision = true;
+          await consumeFreeGeminiQuota(req, sessionId);
+        }
+      }
+
       const planned = await planAndFetchScriptVisuals({
         title: String(title || 'TwinForge Studio Production'),
         scriptText: String(scriptText || title || ''),
@@ -1226,7 +1459,7 @@ async function startServer() {
         shootingAngle: shootingAngle || 'auto_director',
         voiceIdentity: voiceIdentity || state.twin.personality.preferredVoiceId,
         mode,
-        twinFaceImageAssets: imageAssets,
+        twinFaceImageAssets: allowGeminiVision ? imageAssets : [],
         preferredPortraitId: portraitAssetId,
         beatTemplateOverrides: normalizedOverrides,
       });
@@ -1247,8 +1480,7 @@ async function startServer() {
   // Video Render Pipeline (Local Free, Balanced, or Explicitly Approved Premium)
   app.post('/api/studio/render', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { mode, sessionId, state } = await readReqWorkspace(req);
       const {
         title,
         scriptId,
@@ -1312,13 +1544,65 @@ async function startServer() {
         MIN_VIDEO_DURATION_SEC,
         Math.min(120, Math.round(Number(targetDurationSec) || Math.round(words / 2.2) || MIN_VIDEO_DURATION_SEC))
       );
-      const costEst = estimateJobCost(state, qualityTier, voiceProvider, visualProvider, estSec);
+      const prelimCost = estimateJobCost(state, qualityTier, voiceProvider, visualProvider, estSec);
+      const veoGate =
+        visualProvider === 'gemini_omni_veo'
+          ? await evaluatePaidVeoAccess({
+              req,
+              sessionId,
+              estimatedUsd: prelimCost.estimatedTotalUsd,
+            })
+          : undefined;
+      const costEst = estimateJobCost(state, qualityTier, voiceProvider, visualProvider, estSec, veoGate);
+
+      // CRITICAL SERVER LOCK: Block Paid Gemini Veo unconditionally unless unlocked by Owner token or verified tester Stripe credits
+      if (visualProvider === 'gemini_omni_veo' && (!veoGate || !veoGate.allowed)) {
+        return res.status(403).json({
+          error:
+            veoGate?.reason ||
+            'Developer Zero-Bill Shield is ACTIVE: Paid Gemini Omni / Veo is locked server-side ($0.00 developer risk).',
+          code: 'PAID_VEO_LOCKED_ZERO_DEV_BILL',
+          estimate: costEst,
+        });
+      }
 
       if (costEst.requiresExplicitPaidApproval && !approvedPaidCharge) {
         return res.status(402).json({
           error: 'Explicit user cost authorization required before executing this render.',
           estimate: costEst,
         });
+      }
+
+      // Validate external BYO paid connectors BEFORE burning any voice synthesis or credits
+      let externalPaidConnector: IntegrationConnector | undefined;
+      if (
+        visualProvider === 'liveportrait_webhook' ||
+        visualProvider === 'heygen_webhook' ||
+        visualProvider === 'custom_paid_video_webhook'
+      ) {
+        const lookupId =
+          visualProvider === 'custom_paid_video_webhook'
+            ? 'custom_paid_video_webhook'
+            : 'liveportrait_heygen';
+        externalPaidConnector = state.integrations.find((i) => i.id === lookupId);
+        if (!externalPaidConnector?.endpointUrl) {
+          return res.status(400).json({
+            error: `${
+              visualProvider === 'custom_paid_video_webhook'
+                ? 'Custom Paid Video API'
+                : 'External LivePortrait/HeyGen'
+            } endpoint URL and YOUR API token must be configured in Integrations so you pay your own provider bill ($0.00 developer bill).`,
+          });
+        }
+        const cfg = buildHttpNodeRequestConfig(externalPaidConnector);
+        const hasAuth =
+          Boolean(externalPaidConnector.apiToken?.trim()) ||
+          Object.keys(cfg.headers).some((k) => k.toLowerCase() !== 'content-type');
+        if (!hasAuth) {
+          return res.status(400).json({
+            error: `${externalPaidConnector.name} requires YOUR own API Token / Authorization key in Integrations before rendering ($0.00 developer cost).`,
+          });
+        }
       }
 
       // Plan script-matched backgrounds, prompt-library presets & diverse presenter via Gemini Vision
@@ -1408,7 +1692,9 @@ async function startServer() {
             audioPath = wavOut;
             actualVoiceCost = 0;
           } catch {
-            // Fall back to Gemini Lite TTS if Edge TTS fails
+            // Fall back to Gemini Lite TTS if Edge TTS fails (only if free quota allows)
+            const q = await consumeFreeGeminiQuota(req, sessionId);
+            if (!q.ok) return res.status(429).json({ error: q.error });
             await synthesizeGeminiSpeechWav({
               text: spokenText.slice(0, 900),
               provider: 'gemini_lite_tts',
@@ -1420,7 +1706,41 @@ async function startServer() {
             audioPath = wavOut;
             actualVoiceCost = 0;
           }
+        } else if (voiceProvider === 'elevenlabs_webhook') {
+          const elConn = state.integrations.find((i) => i.id === 'elevenlabs_webhook');
+          if (!elConn?.endpointUrl) {
+            return res.status(400).json({
+              error:
+                'ElevenLabs Personal Voice Clone requires YOUR endpoint URL and API token in Integrations ($0.00 developer cost).',
+            });
+          }
+          const { url, headers, method } = buildHttpNodeRequestConfig(elConn);
+          const elResp = await fetch(url, {
+            method: method === 'GET' ? 'POST' : method,
+            headers,
+            body: JSON.stringify({
+              text: spokenText.slice(0, 1500),
+              model_id: 'eleven_multilingual_v2',
+              voiceIdentity,
+              language,
+              emotion,
+            }),
+            signal: AbortSignal.timeout(25000),
+          });
+          if (!elResp.ok) {
+            const errTxt = (await elResp.text().catch(() => '')).slice(0, 180);
+            return res.status(502).json({
+              error: `ElevenLabs webhook failed (HTTP ${elResp.status})${errTxt ? `: ${errTxt}` : ''}.`,
+            });
+          }
+          const wavName = `render_el_${Date.now()}_${crypto.randomUUID().slice(0, 4)}.wav`;
+          const wavOut = path.join(AUDIO_DIR, wavName);
+          await fs.writeFile(wavOut, Buffer.from(await elResp.arrayBuffer()));
+          audioPath = wavOut;
+          actualVoiceCost = costEst.estimatedVoiceUsd;
         } else if (voiceProvider === 'gemini_flash_tts' || voiceProvider === 'gemini_lite_tts') {
+          const q = await consumeFreeGeminiQuota(req, sessionId);
+          if (!q.ok) return res.status(429).json({ error: q.error });
           const wavName = `render_tts_${Date.now()}_${crypto.randomUUID().slice(0, 4)}.wav`;
           const wavOut = path.join(AUDIO_DIR, wavName);
           await synthesizeGeminiSpeechWav({
@@ -1445,20 +1765,84 @@ async function startServer() {
       let actualVisualCost = 0;
       let durationSec = estSec;
       let provenanceNote = '';
+      let costBilledTo: VideoRenderJob['costBilledTo'] =
+        voiceProvider === 'elevenlabs_webhook' ? 'tester_byo_token' : 'free';
 
       if (visualProvider === 'gemini_omni_veo') {
         const rawVeoPath = path.join(VIDEOS_DIR, `${jobId}_raw_veo.mp4`);
         const veoAspect = aspectRatio === '16:9' ? '16:9' : '9:16';
-        await generatePremiumVeoClip({
-          portraitImagePath: portraitPath,
-          prompt: `Photorealistic studio talking-head creator speaking calmly with natural blinking, subtle head movement, and ${emotion} expression. Framing: ${framing}. Lighting: warm architectural studio. Wardrobe: ${wardrobeNote || 'tailored blazer'}.`,
-          aspectRatio: veoAspect,
-          durationSec: Math.min(10, Math.max(4, Math.round(estSec))),
-          outputRawMp4Path: rawVeoPath,
+        let chargedCredits = false;
+        if (veoGate?.billedTo === 'tester_credits' && sessionId) {
+          const deduct = await deductTesterCredits(sessionId, costEst.estimatedTotalUsd, jobId);
+          if (!deduct.ok) {
+            return res.status(402).json({
+              error: `Insufficient prepaid credits ($${deduct.remainingUsd.toFixed(2)}). Required: $${costEst.estimatedTotalUsd.toFixed(2)}.`,
+            });
+          }
+          chargedCredits = true;
+        }
+        try {
+          await generatePremiumVeoClip({
+            portraitImagePath: portraitPath,
+            prompt: `Photorealistic studio talking-head creator speaking calmly with natural blinking, subtle head movement, and ${emotion} expression. Framing: ${framing}. Lighting: warm architectural studio. Wardrobe: ${wardrobeNote || 'tailored blazer'}.`,
+            aspectRatio: veoAspect,
+            durationSec: Math.min(10, Math.max(4, Math.round(estSec))),
+            outputRawMp4Path: rawVeoPath,
+          });
+          // Preserve local FFmpeg mastering on top of Gemini Omni/Veo output
+          const mastered = await muxAudioAndWatermarkOnVideoFFmpeg({
+            sourceVideoPath: rawVeoPath,
+            audioPath,
+            aiDisclosureWatermark,
+            watermarkText: state.settings.watermarkText,
+            outputVideoPath: outVideoPath,
+            outputThumbPath: outThumbPath,
+          });
+          durationSec = mastered.durationSec;
+          actualVisualCost = costEst.estimatedVisualUsd;
+          costBilledTo = veoGate?.billedTo === 'owner' ? 'owner' : 'tester_credits';
+          provenanceNote =
+            veoGate?.billedTo === 'owner'
+              ? 'Gemini Omni / Veo Motion (Owner Unlocked) + Local FFmpeg Mastering'
+              : 'Gemini Omni / Veo Motion (Tester Prepaid Credits) + Local FFmpeg Mastering';
+        } catch (veoErr) {
+          if (chargedCredits && sessionId) {
+            await refundTesterCredits(sessionId, costEst.estimatedTotalUsd, jobId);
+          }
+          throw veoErr;
+        }
+      } else if (externalPaidConnector) {
+        const reqOrigin = `${req.headers['x-forwarded-proto'] || req.protocol}://${req.headers['x-forwarded-host'] || req.get('host')}`;
+        const rawWorkerMp4 = path.join(VIDEOS_DIR, `${jobId}_raw_worker.mp4`);
+        const publicPortraitUrl = chosenAsset?.url ? `${reqOrigin}${chosenAsset.url}` : '';
+        const publicAudioUrl = audioPath ? `${reqOrigin}/api/media/audio/${path.basename(audioPath)}` : '';
+        await dispatchExternalPaidVideoWorker({
+          connector: externalPaidConnector,
+          vars: {
+            id: jobId,
+            title: title || 'TwinForge Production',
+            scriptText: scriptText || title || '',
+            aspectRatio: aspectRatio || '9:16',
+            emotion: emotion || 'Conversational',
+            portraitUrl: publicPortraitUrl,
+            audioUrl: publicAudioUrl,
+            durationSec: String(estSec),
+          },
+          defaultPayload: {
+            jobId,
+            provider: visualProvider,
+            title,
+            scriptText,
+            aspectRatio: aspectRatio || '9:16',
+            emotion,
+            durationSec: estSec,
+            portraitUrl: publicPortraitUrl,
+            audioUrl: publicAudioUrl,
+          },
+          outputRawMp4Path: rawWorkerMp4,
         });
-        // Preserve local FFmpeg mastering on top of Gemini Omni/Veo output
         const mastered = await muxAudioAndWatermarkOnVideoFFmpeg({
-          sourceVideoPath: rawVeoPath,
+          sourceVideoPath: rawWorkerMp4,
           audioPath,
           aiDisclosureWatermark,
           watermarkText: state.settings.watermarkText,
@@ -1467,7 +1851,8 @@ async function startServer() {
         });
         durationSec = mastered.durationSec;
         actualVisualCost = costEst.estimatedVisualUsd;
-        provenanceNote = 'Gemini Omni / Veo Motion + Local FFmpeg Mastering';
+        costBilledTo = 'tester_byo_token';
+        provenanceNote = `${externalPaidConnector.name} (Tester BYO Token) + Local FFmpeg Mastering`;
       } else {
         if (visualProvider === 'free_hf_space') {
           const connector = state.integrations.find((i) => i.id === 'free_hf_space');
@@ -1491,15 +1876,6 @@ async function startServer() {
           if (!resp.ok) {
             return res.status(502).json({
               error: `Hugging Face Space returned HTTP ${resp.status}. Switch to Free Live Motion Animator or Multi-Scene FFmpeg Director for instant $0.00 output.`,
-            });
-          }
-        }
-        if (visualProvider === 'liveportrait_webhook' || visualProvider === 'heygen_webhook') {
-          const connector = state.integrations.find((i) => i.id === 'liveportrait_heygen');
-          if (!connector?.endpointUrl) {
-            return res.status(400).json({
-              error:
-                'External LivePortrait/HeyGen webhook URL is not configured in Integrations. Never silently downgrading—please configure it or choose a Free Motion / Gemini Veo engine.',
             });
           }
         }
@@ -1590,6 +1966,7 @@ async function startServer() {
         estimatedCostUsd: costEst.estimatedTotalUsd,
         actualCostUsd,
         approvedPaidCharge: Boolean(approvedPaidCharge),
+        costBilledTo,
         durationSec,
         processingMs,
         status: 'completed',
@@ -1607,11 +1984,11 @@ async function startServer() {
         actor: state.twin.personality.creatorName || 'Creator',
         category: 'render',
         action: `Rendered ${job.aspectRatio} MP4 (${job.qualityTier})`,
-        detail: `${job.title} · ${durationSec}s in ${(processingMs / 1000).toFixed(1)}s · Est $${costEst.estimatedTotalUsd.toFixed(3)} / Actual $${actualCostUsd.toFixed(3)}`,
+        detail: `${job.title} · ${durationSec}s in ${(processingMs / 1000).toFixed(1)}s · Est $${costEst.estimatedTotalUsd.toFixed(3)} / Actual $${actualCostUsd.toFixed(3)} · Billed: ${costBilledTo}`,
         costImpactUsd: actualCostUsd,
       });
 
-      const saved = await writeWorkspace(mode, state);
+      const saved = await writeReqWorkspace(req, state);
       res.json({ workspace: saved, video: job });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Video render failed.' });
@@ -1621,8 +1998,7 @@ async function startServer() {
   // Upload & FFmpeg-master client-animated free Canvas render into H.264 MP4
   app.post('/api/studio/upload-rendered', upload.single('video'), async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       if (!state.twin.consent.attested) {
         return res.status(403).json({
           error: 'Biometric likeness consent must be attested in My Digital Twin before generating digital twin videos.',
@@ -1721,7 +2097,7 @@ async function startServer() {
         costImpactUsd: actualVoiceCost,
       });
 
-      const saved = await writeWorkspace(mode, state);
+      const saved = await writeReqWorkspace(req, state);
       res.json({ workspace: saved, video: job });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to master animated recording.' });
@@ -1730,8 +2106,7 @@ async function startServer() {
 
   app.put('/api/library/:id/review', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       const video = state.videos.find((v) => v.id === req.params.id);
       if (!video) return res.status(404).json({ error: 'Video not found.' });
       video.reviewStatus = req.body.reviewStatus;
@@ -1741,7 +2116,7 @@ async function startServer() {
         action: `Video ${req.body.reviewStatus}`,
         detail: video.title,
       });
-      res.json(await writeWorkspace(mode, state));
+      res.json(await writeReqWorkspace(req, state));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -1749,8 +2124,7 @@ async function startServer() {
 
   app.delete('/api/library/:id', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       const target = state.videos.find((v) => v.id === req.params.id);
       if (!target) return res.status(404).json({ error: 'Video not found.' });
       state.videos = state.videos.filter((v) => v.id !== req.params.id);
@@ -1766,7 +2140,7 @@ async function startServer() {
         action: 'Video Deleted from Library',
         detail: target.title,
       });
-      res.json(await writeWorkspace(mode, state));
+      res.json(await writeReqWorkspace(req, state));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -1775,8 +2149,7 @@ async function startServer() {
   // Side-by-Side Provider Benchmark Runner
   app.post('/api/benchmarks/run', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { sessionId, state } = await readReqWorkspace(req);
       const { providerId, scriptExcerpt, approvedPaidCharge } = req.body;
       const bm = state.benchmarks.find((b) => b.providerId === providerId);
       if (!bm) return res.status(404).json({ error: 'Benchmark provider not found.' });
@@ -1784,6 +2157,22 @@ async function startServer() {
       const sampleScript =
         String(scriptExcerpt || '').trim() ||
         'Every creator assumes camera gear drives retention, when clarity in the first three seconds decides everything.';
+
+      if (providerId === 'gemini_omni_veo') {
+        const veoGate = await evaluatePaidVeoAccess({
+          req,
+          sessionId,
+          estimatedUsd: 0.25,
+        });
+        if (!veoGate.allowed) {
+          return res.status(403).json({
+            error:
+              veoGate.reason ||
+              'Developer Zero-Bill Shield is ACTIVE: Paid Gemini Omni / Veo benchmark is locked server-side ($0.00 developer risk).',
+            code: 'PAID_VEO_LOCKED_ZERO_DEV_BILL',
+          });
+        }
+      }
 
       if (bm.tier === 'premium' && !approvedPaidCharge) {
         return res.status(402).json({
@@ -1815,6 +2204,8 @@ async function startServer() {
         bm.benchmarkedAt = new Date().toISOString();
         bm.notes = `Measured $0.00 Hindi neural synthesis (${edgeRes.voiceUsed}) in ${elapsed}ms. Audition for natural Hindi cadence & pronunciation.`;
       } else if (providerId === 'gemini_lite_tts' || providerId === 'gemini_flash_tts') {
+        const q = await consumeFreeGeminiQuota(req, sessionId);
+        if (!q.ok) return res.status(429).json({ error: q.error });
         const fname = `bm_${providerId}_${Date.now()}.wav`;
         const out = path.join(AUDIO_DIR, fname);
         await synthesizeGeminiSpeechWav({
@@ -1833,6 +2224,38 @@ async function startServer() {
         bm.scriptExcerpt = sampleScript;
         bm.benchmarkedAt = new Date().toISOString();
         bm.notes = `Measured live WAV synthesis in ${elapsed}ms. Audition side-by-side to evaluate voice similarity & clarity.`;
+      } else if (providerId === 'elevenlabs_webhook') {
+        const elConn = state.integrations.find((i) => i.id === 'elevenlabs_webhook');
+        if (!elConn?.endpointUrl || !elConn?.apiToken) {
+          return res.status(400).json({
+            error:
+              'Configure YOUR ElevenLabs endpoint URL and API key in Integrations before running this benchmark ($0.00 developer cost).',
+          });
+        }
+        const { url, headers, method } = buildHttpNodeRequestConfig(elConn);
+        const resp = await fetch(url, {
+          method: method === 'GET' ? 'POST' : method,
+          headers,
+          body: JSON.stringify({
+            text: sampleScript,
+            model_id: 'eleven_multilingual_v2',
+            language: state.twin.personality.primaryLanguage || 'English',
+          }),
+          signal: AbortSignal.timeout(25000),
+        });
+        if (!resp.ok) {
+          return res.status(502).json({ error: `ElevenLabs benchmark returned HTTP ${resp.status}.` });
+        }
+        const fname = `bm_elevenlabs_${Date.now()}.wav`;
+        await fs.writeFile(path.join(AUDIO_DIR, fname), Buffer.from(await resp.arrayBuffer()));
+        const elapsed = Date.now() - startMs;
+        bm.verified = true;
+        bm.processingMs = elapsed;
+        bm.sampleOutputUrl = `/api/media/audio/${fname}`;
+        bm.sampleType = 'audio';
+        bm.scriptExcerpt = sampleScript;
+        bm.benchmarkedAt = new Date().toISOString();
+        bm.notes = `Measured ElevenLabs BYO token synthesis in ${elapsed}ms (billed to your ElevenLabs key).`;
       } else if (providerId === 'ffmpeg_local') {
         const portrait = resolveLocalAssetPath(state.twin.faceAssets[0]?.url);
         if (!portrait) {
@@ -1872,18 +2295,90 @@ async function startServer() {
         if (!portrait) {
           return res.status(400).json({ error: 'Upload a portrait first to benchmark Veo image-to-video.' });
         }
-        const rawVeo = path.join(VIDEOS_DIR, `bm_veo_raw_${Date.now()}.mp4`);
-        const vName = `bm_veo_${Date.now()}.mp4`;
-        const tName = `bm_veo_${Date.now()}.jpg`;
-        await generatePremiumVeoClip({
-          portraitImagePath: portrait,
-          prompt: `Photorealistic studio creator speaking calmly with natural facial expressions and blinking. ${sampleScript}`,
-          aspectRatio: '9:16',
-          durationSec: 5,
-          outputRawMp4Path: rawVeo,
+        const veoGate = await evaluatePaidVeoAccess({ req, sessionId, estimatedUsd: 0.25 });
+        let chargedCredits = false;
+        const bmRef = `bm_veo_${Date.now()}`;
+        if (veoGate.billedTo === 'tester_credits' && sessionId) {
+          const deduct = await deductTesterCredits(sessionId, 0.25, bmRef);
+          if (!deduct.ok) {
+            return res.status(402).json({
+              error: `Insufficient prepaid credits ($${deduct.remainingUsd.toFixed(2)}) for $0.25 Veo benchmark.`,
+            });
+          }
+          chargedCredits = true;
+        }
+        try {
+          const rawVeo = path.join(VIDEOS_DIR, `bm_veo_raw_${Date.now()}.mp4`);
+          const vName = `bm_veo_${Date.now()}.mp4`;
+          const tName = `bm_veo_${Date.now()}.jpg`;
+          await generatePremiumVeoClip({
+            portraitImagePath: portrait,
+            prompt: `Photorealistic studio creator speaking calmly with natural facial expressions and blinking. ${sampleScript}`,
+            aspectRatio: '9:16',
+            durationSec: 5,
+            outputRawMp4Path: rawVeo,
+          });
+          await muxAudioAndWatermarkOnVideoFFmpeg({
+            sourceVideoPath: rawVeo,
+            aiDisclosureWatermark: true,
+            watermarkText: state.settings.watermarkText,
+            outputVideoPath: path.join(VIDEOS_DIR, vName),
+            outputThumbPath: path.join(COVERS_DIR, tName),
+          });
+          const elapsed = Date.now() - startMs;
+          bm.verified = true;
+          bm.processingMs = elapsed;
+          bm.sampleOutputUrl = `/api/media/videos/${vName}`;
+          bm.sampleType = 'video';
+          bm.scriptExcerpt = sampleScript;
+          bm.benchmarkedAt = new Date().toISOString();
+          bm.notes = `Measured Gemini Omni/Veo + FFmpeg master in ${elapsed}ms.`;
+        } catch (veoErr) {
+          if (chargedCredits && sessionId) {
+            await refundTesterCredits(sessionId, 0.25, bmRef);
+          }
+          throw veoErr;
+        }
+      } else if (
+        providerId === 'liveportrait_webhook' ||
+        providerId === 'heygen_webhook' ||
+        providerId === 'custom_paid_video_webhook'
+      ) {
+        const lookupId =
+          providerId === 'custom_paid_video_webhook' ? 'custom_paid_video_webhook' : 'liveportrait_heygen';
+        const conn = state.integrations.find((i) => i.id === lookupId);
+        if (!conn?.endpointUrl || !conn?.apiToken) {
+          return res.status(400).json({
+            error: `Configure YOUR ${bm.providerName} endpoint URL & API token in Integrations before benchmarking ($0.00 developer cost).`,
+          });
+        }
+        const reqOrigin = `${req.headers['x-forwarded-proto'] || req.protocol}://${req.headers['x-forwarded-host'] || req.get('host')}`;
+        const rawWorker = path.join(VIDEOS_DIR, `bm_worker_raw_${Date.now()}.mp4`);
+        const vName = `bm_worker_${Date.now()}.mp4`;
+        const tName = `bm_worker_${Date.now()}.jpg`;
+        await dispatchExternalPaidVideoWorker({
+          connector: conn,
+          vars: {
+            id: `bm_${Date.now()}`,
+            title: `Benchmark · ${bm.providerName}`,
+            scriptText: sampleScript,
+            aspectRatio: '9:16',
+            emotion: 'Editorial',
+            portraitUrl: state.twin.faceAssets[0]?.url ? `${reqOrigin}${state.twin.faceAssets[0].url}` : '',
+            audioUrl: '',
+            durationSec: '5',
+          },
+          defaultPayload: {
+            provider: providerId,
+            scriptText: sampleScript,
+            aspectRatio: '9:16',
+            durationSec: 5,
+            portraitUrl: state.twin.faceAssets[0]?.url ? `${reqOrigin}${state.twin.faceAssets[0].url}` : '',
+          },
+          outputRawMp4Path: rawWorker,
         });
         await muxAudioAndWatermarkOnVideoFFmpeg({
-          sourceVideoPath: rawVeo,
+          sourceVideoPath: rawWorker,
           aiDisclosureWatermark: true,
           watermarkText: state.settings.watermarkText,
           outputVideoPath: path.join(VIDEOS_DIR, vName),
@@ -1896,14 +2391,14 @@ async function startServer() {
         bm.sampleType = 'video';
         bm.scriptExcerpt = sampleScript;
         bm.benchmarkedAt = new Date().toISOString();
-        bm.notes = `Measured Gemini Omni/Veo + FFmpeg master in ${elapsed}ms.`;
+        bm.notes = `Measured ${bm.providerName} (Tester BYO token) + FFmpeg master in ${elapsed}ms.`;
       } else {
         return res.status(400).json({
           error: `${bm.providerName} requires a configured external endpoint in Integrations before benchmarking.`,
         });
       }
 
-      const saved = await writeWorkspace(mode, state);
+      const saved = await writeReqWorkspace(req, state);
       res.json({ workspace: saved, benchmark: bm });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Benchmark execution failed.' });
@@ -1913,12 +2408,11 @@ async function startServer() {
   // Save user-observed quality ratings on a benchmarked provider
   app.put('/api/benchmarks/:id/rate', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       const bm = state.benchmarks.find((b) => b.id === req.params.id);
       if (!bm) return res.status(404).json({ error: 'Benchmark not found.' });
       bm.metrics = { ...bm.metrics, ...req.body.metrics };
-      res.json(await writeWorkspace(mode, state));
+      res.json(await writeReqWorkspace(req, state));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -1927,8 +2421,7 @@ async function startServer() {
   // n8n Automation & Webhook Dispatch
   app.post('/api/automation/dispatch', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       const { workflowName, eventType, targetWebhookUrl, payload } = req.body;
       const n8nIntegration = state.integrations.find((i) => i.id === 'n8n_webhook');
       const url = String(targetWebhookUrl || n8nIntegration?.endpointUrl || '').trim();
@@ -1996,7 +2489,7 @@ async function startServer() {
         detail: `${workflowName || eventType} -> ${url || 'No endpoint'}`,
       });
 
-      res.json(await writeWorkspace(mode, state));
+      res.json(await writeReqWorkspace(req, state));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -2004,8 +2497,7 @@ async function startServer() {
 
   app.post('/api/automation/retry/:id', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       const job = state.automationJobs.find((j) => j.id === req.params.id);
       if (!job) return res.status(404).json({ error: 'Job not found.' });
       job.attempts += 1;
@@ -2028,7 +2520,7 @@ async function startServer() {
           job.logs.push(`[${new Date().toLocaleTimeString()}] Retry #${job.attempts} error: ${err.message}`);
         }
       }
-      res.json(await writeWorkspace(mode, state));
+      res.json(await writeReqWorkspace(req, state));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -2036,14 +2528,13 @@ async function startServer() {
 
   app.post('/api/automation/toggle/:id', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       const job = state.automationJobs.find((j) => j.id === req.params.id);
       if (!job) return res.status(404).json({ error: 'Job not found.' });
       job.status = job.status === 'paused' ? 'queued' : 'paused';
       job.updatedAt = new Date().toISOString();
       job.logs.push(`[${new Date().toLocaleTimeString()}] Operator set status to ${job.status}`);
-      res.json(await writeWorkspace(mode, state));
+      res.json(await writeReqWorkspace(req, state));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -2051,15 +2542,14 @@ async function startServer() {
 
   app.post('/api/automation/webhook/callback', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       const { jobId, status, detail } = req.body;
       const job = state.automationJobs.find((j) => j.id === jobId);
       if (job) {
         job.status = status || 'succeeded';
         job.updatedAt = new Date().toISOString();
         job.logs.push(`[${new Date().toLocaleTimeString()}] Inbound callback: ${detail || job.status}`);
-        await writeWorkspace(mode, state);
+        await writeReqWorkspace(req, state);
       }
       res.json({ received: true });
     } catch (err: any) {
@@ -2070,8 +2560,7 @@ async function startServer() {
   // Publishing Drafts & Dispatch
   app.post('/api/publishing/draft', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       const { videoId, platform, caption, hashtags, scheduledFor } = req.body;
       const video = state.videos.find((v) => v.id === videoId);
       if (!video) return res.status(404).json({ error: 'Selected video not found in library.' });
@@ -2092,7 +2581,7 @@ async function startServer() {
         statusNote: 'Saved as draft. Human approval required prior to external delivery.',
       });
 
-      res.json(await writeWorkspace(mode, state));
+      res.json(await writeReqWorkspace(req, state));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -2100,12 +2589,11 @@ async function startServer() {
 
   app.put('/api/publishing/:id', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       const idx = state.publishingDrafts.findIndex((p) => p.id === req.params.id);
       if (idx === -1) return res.status(404).json({ error: 'Publishing draft not found.' });
       state.publishingDrafts[idx] = { ...state.publishingDrafts[idx], ...req.body };
-      res.json(await writeWorkspace(mode, state));
+      res.json(await writeReqWorkspace(req, state));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -2113,8 +2601,7 @@ async function startServer() {
 
   app.post('/api/publishing/:id/dispatch', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       const draft = state.publishingDrafts.find((p) => p.id === req.params.id);
       if (!draft) return res.status(404).json({ error: 'Publishing draft not found.' });
 
@@ -2144,7 +2631,7 @@ async function startServer() {
         draft.publishStatus = 'scheduled';
         draft.statusNote =
           'No Instagram/Facebook Token or n8n HTTP Node URL configured yet. Kept as Scheduled Draft (never falsely marked Published).';
-        return res.json(await writeWorkspace(mode, state));
+        return res.json(await writeReqWorkspace(req, state));
       }
 
       if (chosenConnector.id === 'instagram_direct') {
@@ -2161,7 +2648,7 @@ async function startServer() {
           draft.publishStatus = 'failed';
           draft.statusNote =
             'Instagram Graph API requires a public HTTPS video URL to fetch MP4 bytes. Open the Instagram Direct Connector drawer and set Public Media Base URL (or run via your *.run.app preview URL).';
-          return res.json(await writeWorkspace(mode, state));
+          return res.json(await writeReqWorkspace(req, state));
         }
 
         const createUrl = `https://graph.facebook.com/v21.0/${encodeURIComponent(igUserId)}/media`;
@@ -2243,7 +2730,7 @@ async function startServer() {
         if (!url) {
           draft.publishStatus = 'scheduled';
           draft.statusNote = 'HTTP Node Endpoint URL is blank. Saved as Scheduled Draft.';
-          return res.json(await writeWorkspace(mode, state));
+          return res.json(await writeReqWorkspace(req, state));
         }
 
         const mediaBase = (chosenConnector.publicMediaBaseUrl || reqOrigin).replace(/\/+$/, '');
@@ -2310,7 +2797,7 @@ async function startServer() {
         detail: `${draft.platform} · ${draft.videoTitle} (${chosenConnector.name})`,
       });
 
-      res.json(await writeWorkspace(mode, state));
+      res.json(await writeReqWorkspace(req, state));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -2319,8 +2806,7 @@ async function startServer() {
   // Analytics factual logging
   app.post('/api/analytics/log', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       const b = req.body;
       const views = Math.max(0, Number(b.views) || 0);
       const shares = Math.max(0, Number(b.shares) || 0);
@@ -2350,7 +2836,7 @@ async function startServer() {
         loggedAt: new Date().toISOString(),
       });
 
-      res.json(await writeWorkspace(mode, state));
+      res.json(await writeReqWorkspace(req, state));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -2359,8 +2845,7 @@ async function startServer() {
   // Integrations update & reachability / live API test
   app.put('/api/integrations/:id', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       const item = state.integrations.find((i) => i.id === req.params.id);
       if (!item) return res.status(404).json({ error: 'Integration not found.' });
 
@@ -2406,7 +2891,7 @@ async function startServer() {
         action: 'Integration Node Updated',
         detail: `${item.name} (${item.configured ? 'Configured' : 'Cleared'})`,
       });
-      res.json(await writeWorkspace(mode, state));
+      res.json(await writeReqWorkspace(req, state));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -2414,20 +2899,36 @@ async function startServer() {
 
   app.post('/api/integrations/:id/test', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       const item = state.integrations.find((i) => i.id === req.params.id);
       if (!item) return res.status(404).json({ error: 'Integration not found.' });
       const now = new Date().toISOString();
       item.lastCheckedAt = now;
 
-      if (item.id === 'gemini_intelligence' || item.id === 'gemini_omni_veo') {
+      if (item.id === 'gemini_intelligence') {
         item.status = state.capabilities.geminiConfigured ? 'connected' : 'unconfigured';
         item.lastTestResult = {
           ok: state.capabilities.geminiConfigured,
           message: state.capabilities.geminiConfigured
-            ? 'Server-side GEMINI_API_KEY verified.'
+            ? 'Server-side GEMINI_API_KEY verified (Free-Tier quota protected).'
             : 'GEMINI_API_KEY missing in environment.',
+          testedAt: now,
+        };
+      } else if (item.id === 'gemini_omni_veo') {
+        const flagOn = isPaidVeoFlagEnabled();
+        const ownerOk = isOwnerAuthorized(req);
+        const stripeOn = isStripeConfigured();
+        const usable = state.capabilities.geminiConfigured && flagOn && (ownerOk || stripeOn);
+        item.status = !flagOn ? 'unconfigured' : usable ? 'connected' : 'reachable';
+        item.lastTestResult = {
+          ok: flagOn ? usable : true,
+          message: !flagOn
+            ? 'Zero-Bill Shield LOCKED ($0.00 developer bill guarantee). Paid Veo cannot run for preview testers.'
+            : ownerOk
+              ? 'Paid Veo UNLOCKED for verified Developer Owner session.'
+              : stripeOn
+                ? 'Paid Veo active via Stripe Tester Prepaid Credits ($0.00 developer liability).'
+                : 'ALLOW_PAID_GEMINI_VEO=true requires Owner Passcode or STRIPE_SECRET_KEY before public testing.',
           testedAt: now,
         };
       } else if (item.id === 'ffmpeg_local') {
@@ -2549,6 +3050,41 @@ async function startServer() {
             testedAt: now,
           };
         }
+      } else if (
+        item.id === 'elevenlabs_webhook' ||
+        item.id === 'liveportrait_heygen' ||
+        item.id === 'custom_paid_video_webhook'
+      ) {
+        const { url, headers } = buildHttpNodeRequestConfig(item);
+        const hasAuth =
+          Boolean(item.apiToken?.trim()) ||
+          Object.keys(headers).some((k) => k.toLowerCase() !== 'content-type');
+        if (!hasAuth) {
+          item.status = 'unconfigured';
+          item.lastTestResult = {
+            ok: false,
+            message: 'Enter YOUR personal API token / Authorization header so your provider bills your account ($0.00 developer cost).',
+            testedAt: now,
+          };
+        } else {
+          try {
+            const resp = await fetch(url, { method: 'HEAD', headers, signal: AbortSignal.timeout(6000) });
+            item.status = resp.ok || resp.status < 500 ? 'connected' : 'unreachable';
+            item.lastTestResult = {
+              ok: resp.ok || resp.status < 500,
+              statusCode: resp.status,
+              message: `BYO Token + Endpoint checked (HTTP ${resp.status}). Calls will bill your own account.`,
+              testedAt: now,
+            };
+          } catch (errNet: any) {
+            item.status = 'unreachable';
+            item.lastTestResult = {
+              ok: false,
+              message: errNet.message || 'Endpoint unreachable',
+              testedAt: now,
+            };
+          }
+        }
       } else {
         try {
           const resp = await fetch(item.endpointUrl, { method: 'HEAD', signal: AbortSignal.timeout(6000) });
@@ -2568,7 +3104,7 @@ async function startServer() {
           };
         }
       }
-      res.json(await writeWorkspace(mode, state));
+      res.json(await writeReqWorkspace(req, state));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -2577,10 +3113,9 @@ async function startServer() {
   // Settings, Full JSON Export & Live Reset
   app.put('/api/settings', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { state } = await readReqWorkspace(req);
       state.settings = { ...state.settings, ...req.body };
-      res.json(await writeWorkspace(mode, state));
+      res.json(await writeReqWorkspace(req, state));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -2588,8 +3123,7 @@ async function startServer() {
 
   app.get('/api/settings/export', async (req, res) => {
     try {
-      const mode = resolveMode(req);
-      const state = await readWorkspace(mode);
+      const { mode, state } = await readReqWorkspace(req);
       res.setHeader('Content-Disposition', `attachment; filename="twinforge_${mode}_export.json"`);
       res.json(state);
     } catch (err: any) {
@@ -2597,9 +3131,11 @@ async function startServer() {
     }
   });
 
-  app.post('/api/settings/reset-live', async (_req, res) => {
+  app.post('/api/settings/reset-live', async (req, res) => {
     try {
-      const fresh = await resetLiveWorkspace();
+      const sessionId = resolveSessionId(req);
+      const fresh = await resetLiveWorkspace(sessionId);
+      fresh.capabilities.billingProtection = await getBillingProtectionStatus({ req, sessionId });
       res.json(fresh);
     } catch (err: any) {
       res.status(500).json({ error: err.message });

@@ -44,6 +44,25 @@ export default function App() {
 
     const loadWithRetry = async (attempt = 0) => {
       try {
+        // Verify Stripe prepaid credit top-up return if present in URL
+        const params = new URLSearchParams(window.location.search);
+        const stripeSessionId = params.get('stripe_session_id');
+        if (stripeSessionId) {
+          try {
+            await apiRequest('/api/billing/verify-stripe-session', mode, {
+              method: 'POST',
+              body: JSON.stringify({ stripeSessionId }),
+            });
+          } catch {
+            // Non-fatal if already verified or invalid
+          } finally {
+            params.delete('stripe_session_id');
+            params.delete('stripe_cancelled');
+            const qs = params.toString();
+            window.history.replaceState({}, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`);
+          }
+        }
+
         const data = await apiRequest<WorkspaceState>(`/api/workspace?mode=${mode}`, mode);
         if (active) setWorkspace(data);
       } catch (err: any) {
@@ -184,6 +203,7 @@ export default function App() {
             mode={mode}
             preselectedScriptId={preselectedScriptId}
             onUpdateWorkspace={setWorkspace}
+            onNavigate={setActiveSection}
           />
         )}
 
